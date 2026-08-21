@@ -1,6 +1,7 @@
 import os
 import sys
 import smtplib
+import time
 import urllib.request
 import urllib.parse
 from email.mime.text import MIMEText
@@ -16,7 +17,7 @@ TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 SMTP_SERVER = os.environ.get("SMTP_SERVER")
 SMTP_PORT = os.environ.get("SMTP_PORT", "465")
 SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASS = os.environ.get("SMTP_PASS")
+SMTP_PASS = os.environ.get("SAP_PASSWORD")
 TO_EMAIL = os.environ.get("TO_EMAIL")
 
 def notify(subject: str, message: str):
@@ -60,6 +61,46 @@ if not all([BAS_URL, SAP_EMAIL, SAP_PASSWORD]):
     notify("SAP BAS 保活配置异常", err)
     sys.exit(1)
 
+# 穿透 Shadow DOM 与 UI5 组件的通用 JS 点击脚本
+JS_CLICK_SCRIPT = """
+() => {
+    function deepScan(root) {
+        if (!root) return false;
+        const elements = root.querySelectorAll('*');
+        for (let el of elements) {
+            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+            const title = (el.getAttribute('title') || '').toLowerCase();
+            const icon = (el.getAttribute('icon') || '').toLowerCase();
+            const name = (el.getAttribute('name') || '').toLowerCase();
+            const id = (el.id || '').toLowerCase();
+
+            // 匹配包含 start 或 play 的启动图标/按钮
+            if (aria.includes('start') || title.includes('start') || 
+                icon.includes('play') || name.includes('play') || id.includes('start')) {
+                
+                // 双重触发原生点击事件
+                el.click();
+                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                return true;
+            }
+
+            // 递归穿透 Shadow DOM
+            if (el.shadowRoot) {
+                if (deepScan(el.shadowRoot)) return true;
+            }
+        }
+        return false;
+    }
+    return deepScan(document);
+}
+"""
+
+JS_CHECK_RUNNING = """
+() => {
+    return (document.body.innerText || '').includes('RUNNING');
+}
+"""
+
 def run():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -91,57 +132,52 @@ def run():
                 submit_btn = page.locator("#logOnFormSubmit, button[type='submit'], button:has-text('Log On')").first
                 submit_btn.click()
                 
-                print("已提交登录信息，等待页面重定向...")
+                print("已提交登录信息，等待页面完全加载...")
                 page.wait_for_timeout(10000)
 
-            print("✅ 登录成功，等待 Dev Space 界面完整渲染...")
-            page.wait_for_timeout(15000)
+            print("✅ 登录成功，开始全框架 (iframe) 轮询扫描 Dev Space 状态...")
+            
+            clicked = False
+            is_running = False
 
-            # 1. 优先校验是否已经是 RUNNING 状态
-            is_running = page.evaluate("""() => {
-                const text = document.body.innerText || '';
-                return text.includes('RUNNING');
-            }""")
+            # 最长等待 30 秒，每 3 秒遍历所有 iframe 扫描一次
+            for attempt in range(10):
+                time.sleep(3)
+                frames = page.frames
+                print(f"🔄 第 {attempt + 1} 次扫描，当前包含 {len(frames)} 个页面框架...")
 
-            if is_running:
-                print("✅ 检测到 Dev Space 已经处于 RUNNING (运行中) 状态，无需点击开机。")
-                page.wait_for_timeout(5000)
-                return
+                # 1. 检查是否已经是 RUNNING 状态
+                for frame in frames:
+                    try:
+                        if frame.evaluate(JS_CHECK_RUNNING):
+                            is_running = True
+                            break
+                    except Exception:
+                        pass
 
-            # 2. 使用 JavaScript 深度递归扫描整个 DOM 与 Shadow DOM 寻找并点击 Start 图标
-            print("🔍 启动 Shadow DOM 深度扫描器寻找大三角启动图标...")
-            clicked = page.evaluate("""() => {
-                function deepFindAndClick(root) {
-                    const elements = root.querySelectorAll('*');
-                    for (let el of elements) {
-                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                        const title = (el.getAttribute('title') || '').toLowerCase();
-                        const icon = (el.getAttribute('icon') || '').toLowerCase();
-                        const name = (el.getAttribute('name') || '').toLowerCase();
+                if is_running:
+                    print("✅ 检测到 Dev Space 已经处于 RUNNING 状态，无需点击。")
+                    page.wait_for_timeout(3000)
+                    return
 
-                        // 匹配属性中包含 start 或 play 的图标/按钮
-                        if (aria.includes('start') || title.includes('start') || icon.includes('play') || name.includes('play')) {
-                            el.click();
-                            return true;
-                        }
+                # 2. 尝试在所有 iframe 里寻找大三角启动图标
+                for frame in frames:
+                    try:
+                        if frame.evaluate(JS_CLICK_SCRIPT):
+                            clicked = True
+                            break
+                    except Exception:
+                        pass
 
-                        // 递归深入 Shadow DOM
-                        if (el.shadowRoot) {
-                            if (deepFindAndClick(el.shadowRoot)) return true;
-                        }
-                    }
-                    return false;
-                }
-                return deepFindAndClick(document);
-            }""")
+                if clicked:
+                    print("▶️ 成功在框架中找到并点击大三角启动图标！")
+                    print("等待 15 秒等待系统响应...")
+                    page.wait_for_timeout(15000)
+                    print("🎉 启动指令已成功提交！")
+                    return
 
-            if clicked:
-                print("▶️ 成功触发深度 Shadow DOM 点击！大三角启动按钮已被点击。")
-                print("等待 15 秒确认启动流程...")
-                page.wait_for_timeout(15000)
-                print("🎉 保活与开机指令已成功提交！")
-            else:
-                raise Exception("深度扫描未在页面或 Shadow DOM 中找到包含 'Start' 或 'play' 的可点击元素！")
+            if not clicked and not is_running:
+                raise Exception("轮询 30 秒未找到 Start 启动图标，可能页面未加载完成或停留在错误界面。")
 
         except Exception as e:
             err_body = f"保活过程异常:\n{str(e)}"
