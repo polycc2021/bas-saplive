@@ -16,7 +16,7 @@ TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 SMTP_SERVER = os.environ.get("SMTP_SERVER")
 SMTP_PORT = os.environ.get("SMTP_PORT", "465")
 SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASS = os.environ.get("SMTP_PASS")
+SMTP_PASS = os.environ.get("SAP_EMAIL")
 TO_EMAIL = os.environ.get("TO_EMAIL")
 
 def notify(subject: str, message: str):
@@ -64,58 +64,75 @@ def run():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 720}
         )
         page = context.new_page()
 
         try:
             print(f"正在访问 BAS: {BAS_URL}")
-            page.goto(BAS_URL, wait_until="networkidle", timeout=60000)
+            page.goto(BAS_URL, wait_until="domcontentloaded", timeout=60000)
 
             # 检测是否进入 SAP 登录界面
             if "accounts.sap.com" in page.url or "idp" in page.url or page.locator("input[name='j_username']").is_visible():
                 print("🔑 检测到登录界面，开始自动输入凭据...")
                 
-                # 填写邮箱/账号
                 user_input = page.locator("input[name='j_username'], #j_username, input[type='email']").first
                 user_input.fill(SAP_EMAIL)
                 
-                # 处理“继续”按钮（部分登录页需要）
                 continue_btn = page.locator("button:has-text('Continue'), #displayNameSubmit")
                 if continue_btn.is_visible():
                     continue_btn.click()
                     page.wait_for_timeout(2000)
 
-                # 填写密码
                 pass_input = page.locator("input[name='j_password'], #j_password, input[type='password']").first
                 pass_input.fill(SAP_PASSWORD)
 
-                # 点击登录
                 submit_btn = page.locator("#logOnFormSubmit, button[type='submit'], button:has-text('Log On')").first
                 submit_btn.click()
                 
-                print("已提交登录信息，等待加载...")
+                print("已提交登录信息，等待重定向...")
                 page.wait_for_load_state("networkidle", timeout=60000)
 
-            print("✅ 登录成功，等待页面渲染...")
-            page.wait_for_timeout(10000)
+            print("✅ 登录成功，等待 Dev Space 列表界面加载...")
+            
+            # 强力等待：等待页面出现 'Dev Spaces' 或表格元素（最多等 40 秒）
+            try:
+                page.wait_for_selector("text=Dev Space, text=Create Dev Space, table, .fd-table", timeout=40000)
+            except Exception:
+                print("⚠️ 警告：等待 Dev Space 列表渲染超时，尝试强行寻找 Start 按钮...")
 
-            # 唤醒 Stopped 状态的 Dev Space
-            start_btn = page.locator("button[aria-label*='Start'], button[title*='Start'], span[aria-label*='Start']")
+            page.wait_for_timeout(5000) # 额外缓冲 5 秒
+
+            # 扩展 Start 按钮的定位范围（覆盖图标、文本、属性等）
+            start_btn = page.locator(
+                "button[aria-label*='Start'], button[title*='Start'], "
+                "button:has-text('Start'), span[aria-label*='Start'], "
+                "[data-aria-label*='Start'], button.fd-button--emphasized"
+            )
+
+            # 检查是否有 Stop / RUNNING 状态的标志
+            is_running = page.locator("text=RUNNING, button[aria-label*='Stop'], button[title*='Stop']").count() > 0
+
             if start_btn.count() > 0 and start_btn.first.is_visible():
-                print("检测到 Dev Space 处于 Stop 状态，自动点击 Start 启动...")
+                print("⚡ 检测到 Dev Space 处于 STOPPED 状态，点击 Start 开启...")
                 start_btn.first.click()
-                page.wait_for_timeout(10000)
-
-            page.wait_for_timeout(10000)
-            print("🎉 保活任务顺利完成！")
+                print("已点击 Start，等待 15 秒让开机进程启动...")
+                page.wait_for_timeout(15000)
+                print("🎉 已成功发送启动指令！")
+            elif is_running:
+                print("✅ 检测到 Dev Space 已经处于 RUNNING (运行中) 状态，无需点击开机。")
+                page.wait_for_timeout(5000)
+            else:
+                # 既没有 Running，也没有找到 Start 按钮，说明页面加载异常或被弹窗遮挡
+                raise Exception("未找到 Start 按钮，且未检测到 RUNNING 状态！可能网页渲染未完成或停留在未知界面。")
 
         except Exception as e:
-            err_body = f"脚本运行出错:\n{str(e)}"
-            print(err_body)
+            err_body = f"保活过程异常:\n{str(e)}"
+            print(f"❌ {err_body}")
             page.screenshot(path="failure.png")
-            notify("❌ SAP BAS 保活脚本异常", err_body)
-            sys.exit(1)
+            notify("❌ SAP BAS 保活脚本未成功开启 Dev Space", err_body)
+            sys.exit(1) # 抛出异常，让 GitHub Actions 显示红色 ✗，触发报错提醒
         finally:
             browser.close()
 
