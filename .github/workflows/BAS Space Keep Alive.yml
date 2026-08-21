@@ -1,47 +1,53 @@
 name: SAP BAS Dev Space Keep Alive
 
 on:
-  schedule:
-    - cron: '*/20 * * * *'
   workflow_dispatch:
+
+  schedule:
+    # 每 20 分钟运行一次
+    - cron: "*/20 * * * *"
+
+permissions:
+  contents: read
 
 jobs:
   keep-alive:
+
     runs-on: ubuntu-latest
 
+    timeout-minutes: 10
+
     steps:
-    - name: 检出代码
-      uses: actions/checkout@v4
 
-    - name: 配置 Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: 安装 Playwright 浏览器
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        playwright install chromium --with-deps
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-    - name: 执行保活脚本
-      env:
-        BAS_URL: ${{ secrets.BAS_URL }}
-        SAP_EMAIL: ${{ secrets.SAP_EMAIL }}
-        SAP_PASSWORD: ${{ secrets.SAP_PASSWORD }}
-        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-        SMTP_PORT: ${{ secrets.SMTP_PORT }}
-        SMTP_USER: ${{ secrets.SMTP_USER }}
-        SMTP_PASS: ${{ secrets.SMTP_PASS }}
-        TO_EMAIL: ${{ secrets.TO_EMAIL }}
-      run: python keep_alive.py
+      - name: Install Playwright
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          playwright install --with-deps chromium
 
-    - name: 出错时保存截图
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: failure-screenshot
-        path: failure.png
+      - name: Start SAP BAS Dev Space
+        env:
+          BAS_URL: ${{ secrets.BAS_URL }}
+          BAS_USERNAME: ${{ secrets.BAS_USERNAME }}
+          BAS_PASSWORD: ${{ secrets.BAS_PASSWORD }}
+          BAS_DEVSPACE: ${{ secrets.BAS_DEVSPACE }}
+          BAS_PROFILE: ${{ secrets.BAS_PROFILE }}
+
+        run: |
+          python keep_alive.py
+
+      - name: Upload error screenshot
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bas-error-screenshot
+          path: bas_error.png
+          if-no-files-found: ignore
