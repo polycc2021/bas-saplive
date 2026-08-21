@@ -662,32 +662,115 @@ def get_status(workspace):
     if not workspace:
         return "UNKNOWN"
 
-    for key in [
-        "status",
-        "state",
-        "phase"
-    ]:
+    # ========================================================
+    # 打印所有可能的状态字段
+    # ========================================================
 
-        value = workspace.get(key)
+    possible_paths = [
 
-        if value:
+        # 顶层
+        ("status", workspace.get("status")),
+        ("state", workspace.get("state")),
+        ("phase", workspace.get("phase")),
+        ("suspended", workspace.get("suspended")),
+
+        # config
+        (
+            "config.status",
+            workspace.get(
+                "config",
+                {}
+            ).get("status")
+        ),
+
+        (
+            "config.state",
+            workspace.get(
+                "config",
+                {}
+            ).get("state")
+        ),
+
+        (
+            "config.phase",
+            workspace.get(
+                "config",
+                {}
+            ).get("phase")
+        ),
+
+        (
+            "config.suspended",
+            workspace.get(
+                "config",
+                {}
+            ).get("suspended")
+        ),
+
+        # labels
+        (
+            "labels.status",
+            workspace.get(
+                "labels",
+                {}
+            ).get("status")
+        ),
+
+        (
+            "labels.state",
+            workspace.get(
+                "labels",
+                {}
+            ).get("state")
+        ),
+    ]
+
+    for path, value in possible_paths:
+
+        if value is not None:
+
+            log(
+                f"检测到状态字段 {path} = {value}"
+            )
+
+            # suspended=true 表示停止
+            if (
+                path.endswith("suspended")
+            ):
+
+                if value is True:
+                    return "STOPPED"
+
+                if value is False:
+                    return "RUNNING"
+
             return str(value).upper()
 
-    config = workspace.get(
-        "config",
-        {}
+    # ========================================================
+    # 如果没有直接状态字段
+    # ========================================================
+
+    log(
+        "没有找到标准 status/state/phase 字段。"
     )
 
-    for key in [
-        "status",
-        "state",
-        "phase"
-    ]:
+    # 最后打印 workspace 结构
+    try:
 
-        value = config.get(key)
+        log(
+            "当前 Workspace 完整结构："
+        )
 
-        if value:
-            return str(value).upper()
+        log(
+            json.dumps(
+                workspace,
+                indent=2,
+                ensure_ascii=False
+            )[:10000]
+        )
+
+    except Exception:
+        pass
 
     return "UNKNOWN"
 
@@ -696,91 +779,266 @@ def get_status(workspace):
 # 启动 Dev Space
 # ============================================================
 
-def start_workspace(
-    context,
-    jwt,
-    workspace
-):
+def get_workspace(context, jwt):
 
-    config = workspace.get(
-        "config",
-        {}
-    )
-
-    labels = workspace.get(
-        "labels",
-        {}
-    )
-
-    workspace_id = (
-        config.get("id")
-        or workspace.get("id")
-        or DEVSPACE_ID
-    )
-
-    display_name = (
-        labels.get("displayname")
-        or labels.get("displayName")
-        or DEVSPACE_NAME
-    )
-
+    # SAP 官方文档：
+    # GET /ws-manager/api/v1/workspace?all=true
     url = (
         BAS_URL
-        + "/ws-manager/api/v1/workspace/"
-        + workspace_id
-        + "?all=false"
+        + "/ws-manager/api/v1/workspace?all=true"
     )
 
     log(
-        "发送 Dev Space 启动请求..."
+        "查询 Dev Space..."
     )
 
-    log(
-        f"Workspace ID：{workspace_id}"
-    )
-
-    payload = {
-        "suspended": False,
-        "WorkspaceDisplayName": display_name
-    }
-
-    response = context.request.put(
+    response = context.request.get(
         url,
         headers={
             "X-Approuter-Authorization":
-                f"Bearer {jwt}",
-            "Content-Type":
-                "application/json"
+                f"Bearer {jwt}"
         },
-        data=json.dumps(payload),
         timeout=60000
     )
 
     log(
-        f"启动 API 状态码：{response.status}"
+        f"Workspace API 状态码：{response.status}"
     )
 
-    if response.status not in [
-        200,
-        201,
-        202
-    ]:
+    if response.status != 200:
 
         log(
-            "启动失败："
+            "Workspace API 请求失败："
         )
 
         log(
-            response.text()[:3000]
+            response.text()[:5000]
         )
 
-        return False
+        return None
+
+    try:
+
+        data = response.json()
+
+    except Exception as e:
+
+        log(
+            f"JSON 解析失败：{e}"
+        )
+
+        log(
+            response.text()[:5000]
+        )
+
+        return None
+
+    # ========================================================
+    # 打印 SAP 实际返回结构
+    # ========================================================
 
     log(
-        "启动请求已发送。"
+        "SAP Workspace API 返回数据："
     )
 
-    return True
+    try:
+
+        debug_json = json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False
+        )
+
+        log(
+            debug_json[:12000]
+        )
+
+    except Exception as e:
+
+        log(
+            f"无法打印 JSON：{e}"
+        )
+
+    # ========================================================
+    # 提取 workspace 列表
+    # ========================================================
+
+    workspaces = None
+
+    if isinstance(data, list):
+
+        workspaces = data
+
+    elif isinstance(data, dict):
+
+        # SAP 可能返回不同包装形式
+        for key in [
+            "workspaces",
+            "workspace",
+            "items",
+            "data"
+        ]:
+
+            if (
+                key in data
+                and isinstance(
+                    data[key],
+                    list
+                )
+            ):
+
+                workspaces = data[key]
+
+                break
+
+        # 如果返回本身就是单个 workspace
+        if workspaces is None:
+
+            if (
+                "config" in data
+                or "labels" in data
+            ):
+
+                workspaces = [
+                    data
+                ]
+
+    if not workspaces:
+
+        log(
+            "没有找到 Workspace 列表。"
+        )
+
+        return None
+
+    log(
+        f"API 返回 Workspace 数量：{len(workspaces)}"
+    )
+
+    # ========================================================
+    # 查找我们的 Dev Space
+    # ========================================================
+
+    for workspace in workspaces:
+
+        if not isinstance(
+            workspace,
+            dict
+        ):
+            continue
+
+        config = workspace.get(
+            "config",
+            {}
+        )
+
+        labels = workspace.get(
+            "labels",
+            {}
+        )
+
+        # ----------------------------------------------------
+        # ID
+        # ----------------------------------------------------
+
+        workspace_id = (
+            config.get("id")
+            or workspace.get("id")
+        )
+
+        # ----------------------------------------------------
+        # 名称
+        # ----------------------------------------------------
+
+        display_name = (
+            labels.get("displayname")
+            or labels.get("displayName")
+            or workspace.get("displayname")
+            or workspace.get("displayName")
+            or workspace.get("name")
+        )
+
+        # ----------------------------------------------------
+        # username
+        # ----------------------------------------------------
+
+        username = (
+            workspace.get("username")
+            or config.get("username")
+            or labels.get("username")
+        )
+
+        log(
+            "------------------------------------------"
+        )
+
+        log(
+            f"Workspace ID   : {workspace_id}"
+        )
+
+        log(
+            f"Display Name   : {display_name}"
+        )
+
+        log(
+            f"Username       : {username}"
+        )
+
+        # ----------------------------------------------------
+        # 匹配我们的 ws-a2zlg
+        # ----------------------------------------------------
+
+        if (
+            str(workspace_id)
+            == str(DEVSPACE_ID)
+        ):
+
+            log(
+                "找到目标 Dev Space！"
+            )
+
+            return workspace
+
+        # ----------------------------------------------------
+        # 如果 ID 没匹配，再尝试名称
+        # ----------------------------------------------------
+
+        if (
+            str(display_name)
+            == str(DEVSPACE_NAME)
+        ):
+
+            log(
+                "通过 Dev Space 名称找到目标！"
+            )
+
+            return workspace
+
+    # ========================================================
+    # 没找到
+    # ========================================================
+
+    log(
+        "=========================================="
+    )
+
+    log(
+        "没有找到目标 Dev Space："
+    )
+
+    log(
+        f"名称：{DEVSPACE_NAME}"
+    )
+
+    log(
+        f"ID：{DEVSPACE_ID}"
+    )
+
+    log(
+        "请查看上面的 Workspace API 返回数据。"
+    )
+
+    return None
 
 
 # ============================================================
