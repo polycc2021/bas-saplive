@@ -1,28 +1,70 @@
 import os
 import sys
 import time
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import json
+import requests
 
+from playwright.sync_api import sync_playwright
+
+
+# ============================================================
+# 基本配置
+# ============================================================
 
 BAS_URL = os.getenv(
     "BAS_URL",
     "https://9a18409etrial.us10cf.trial.applicationstudio.cloud.sap"
-)
+).rstrip("/")
 
 BAS_USERNAME = os.getenv("BAS_USERNAME")
 BAS_PASSWORD = os.getenv("BAS_PASSWORD")
 
-BAS_DEVSPACE = os.getenv("BAS_DEVSPACE", "yesdo")
-BAS_PROFILE = os.getenv("BAS_PROFILE", "")
+DEVSPACE_NAME = os.getenv(
+    "BAS_DEVSPACE",
+    "yesdo"
+)
+
+DEVSPACE_ID = os.getenv(
+    "BAS_DEVSPACE_ID",
+    "ws-a2zlg"
+)
 
 HEADLESS = True
 
 
-def log(message):
-    print(f"[BAS] {message}", flush=True)
+# ============================================================
+# 日志
+# ============================================================
 
+def log(text):
+    print(f"[BAS] {text}", flush=True)
+
+
+# ============================================================
+# 检查环境变量
+# ============================================================
+
+def check_environment():
+
+    if not BAS_USERNAME:
+        log("ERROR: BAS_USERNAME 没有设置")
+        sys.exit(1)
+
+    if not BAS_PASSWORD:
+        log("ERROR: BAS_PASSWORD 没有设置")
+        sys.exit(1)
+
+    log(f"BAS URL       : {BAS_URL}")
+    log(f"Dev Space     : {DEVSPACE_NAME}")
+    log(f"Dev Space ID  : {DEVSPACE_ID}")
+
+
+# ============================================================
+# 登录 BAS
+# ============================================================
 
 def login(page):
+
     log("打开 SAP Business Application Studio...")
 
     page.goto(
@@ -31,231 +73,498 @@ def login(page):
         timeout=120000
     )
 
-    page.wait_for_timeout(3000)
+    page.wait_for_timeout(5000)
 
-    # 如果已经登录，直接进入
+    log(f"当前页面：{page.url}")
+
+    # 如果已经进入 BAS
     if "workspace-manager" in page.url:
-        log("已经处于登录状态。")
+        log("已经登录 BAS。")
         return
 
-    # 检查是否出现登录页面
-    if page.get_by_label("Email or User Name").count() == 0:
+    # --------------------------------------------------------
+    # 尝试用户名密码登录
+    # --------------------------------------------------------
 
-        # 如果有身份提供商选择页面
-        if BAS_PROFILE:
-            log(f"选择身份提供商：{BAS_PROFILE}")
+    try:
 
-            try:
-                page.get_by_text(
-                    BAS_PROFILE,
-                    exact=False
-                ).first.click(timeout=15000)
-            except PlaywrightTimeoutError:
-                log("没有找到指定身份提供商，继续尝试当前页面。")
-
-        page.wait_for_timeout(2000)
-
-    # 输入用户名
-    if page.get_by_label("Email or User Name").count() > 0:
-
-        log("输入 BAS 用户名...")
-
-        page.get_by_label(
+        username_box = page.get_by_label(
             "Email or User Name"
-        ).fill(BAS_USERNAME)
+        )
 
-        page.get_by_label(
-            "Password"
-        ).fill(BAS_PASSWORD)
+        if username_box.count() > 0:
 
-        # Keep me signed in
-        try:
-            checkbox = page.get_by_text(
-                "Keep me signed in",
-                exact=False
+            log("发现 SAP 登录页面。")
+
+            username_box.fill(
+                BAS_USERNAME
             )
 
-            if checkbox.count() > 0:
-                checkbox.first.click()
+            password_box = page.get_by_label(
+                "Password"
+            )
+
+            password_box.fill(
+                BAS_PASSWORD
+            )
+
+            log("提交 SAP 登录...")
+
+            continue_button = page.get_by_text(
+                "Continue",
+                exact=True
+            )
+
+            if continue_button.count() > 0:
+                continue_button.click()
+            else:
+                page.keyboard.press("Enter")
+
+            page.wait_for_timeout(8000)
+
+    except Exception as e:
+
+        log(f"登录页面处理异常：{e}")
+
+    log(f"登录后页面：{page.url}")
+
+    # 给 SAP 登录/跳转一些时间
+    page.wait_for_timeout(5000)
+
+
+# ============================================================
+# 获取 JWT
+# ============================================================
+
+def get_jwt(context):
+
+    log("获取 SAP BAS JWT...")
+
+    response = context.request.get(
+        BAS_URL + "/jwt",
+        timeout=60000
+    )
+
+    log(
+        f"JWT HTTP 状态码：{response.status}"
+    )
+
+    if response.status != 200:
+
+        log(
+            "无法获取 JWT。"
+        )
+
+        log(
+            response.text()[:1000]
+        )
+
+        return None
+
+    data = response.json()
+
+    # SAP 返回通常是 {"value":"..."}
+    if isinstance(data, dict):
+
+        jwt = data.get("value")
+
+        if jwt:
+            return jwt
+
+    # 某些情况下可能直接返回字符串
+    if isinstance(data, str):
+        return data
+
+    log("JWT 返回格式无法识别：")
+    log(json.dumps(data, indent=2)[:2000])
+
+    return None
+
+
+# ============================================================
+# 查询 Dev Space
+# ============================================================
+
+def get_workspace(context, jwt):
+
+    url = (
+        BAS_URL
+        + "/ws-manager/api/v1/workspace"
+        + "?all=true"
+    )
+
+    log("查询 Dev Space 状态...")
+
+    response = context.request.get(
+        url,
+        headers={
+            "X-Approuter-Authorization":
+                f"Bearer {jwt}"
+        },
+        timeout=60000
+    )
+
+    log(
+        f"Workspace API HTTP 状态码：{response.status}"
+    )
+
+    if response.status != 200:
+
+        log(
+            response.text()[:2000]
+        )
+
+        return None
+
+    data = response.json()
+
+    # --------------------------------------------------------
+    # API 返回列表
+    # --------------------------------------------------------
+
+    workspaces = data
+
+    if isinstance(data, dict):
+
+        for key in [
+            "workspaces",
+            "workspace",
+            "items",
+            "data"
+        ]:
+
+            if key in data:
+
+                workspaces = data[key]
+                break
+
+    if not isinstance(workspaces, list):
+
+        log("无法识别 Workspace API 返回结构。")
+
+        log(
+            json.dumps(
+                data,
+                indent=2
+            )[:5000]
+        )
+
+        return None
+
+    # --------------------------------------------------------
+    # 查找 yesdo
+    # --------------------------------------------------------
+
+    for workspace in workspaces:
+
+        try:
+
+            labels = workspace.get(
+                "labels",
+                {}
+            )
+
+            config = workspace.get(
+                "config",
+                {}
+            )
+
+            display_name = (
+                labels.get("displayname")
+                or labels.get("displayName")
+                or workspace.get("displayname")
+                or workspace.get("name")
+            )
+
+            workspace_id = (
+                config.get("id")
+                or workspace.get("id")
+            )
+
+            if (
+                display_name == DEVSPACE_NAME
+                or workspace_id == DEVSPACE_ID
+            ):
+
+                return workspace
+
         except Exception:
-            pass
+            continue
 
-        page.wait_for_timeout(500)
+    log(
+        f"没有找到 Dev Space：{DEVSPACE_NAME}"
+    )
 
-        log("提交登录...")
+    return None
 
-        page.get_by_text(
-            "Continue",
-            exact=True
-        ).click()
 
-        page.wait_for_load_state(
-            "domcontentloaded",
+# ============================================================
+# 提取状态
+# ============================================================
+
+def get_status(workspace):
+
+    if not workspace:
+        return "UNKNOWN"
+
+    # 尝试不同字段
+    for key in [
+        "status",
+        "state",
+        "phase"
+    ]:
+
+        value = workspace.get(key)
+
+        if value:
+            return str(value).upper()
+
+    # 有些返回结构可能把状态放在 config
+    config = workspace.get(
+        "config",
+        {}
+    )
+
+    for key in [
+        "status",
+        "state",
+        "phase"
+    ]:
+
+        value = config.get(key)
+
+        if value:
+            return str(value).upper()
+
+    return "UNKNOWN"
+
+
+# ============================================================
+# 启动 Dev Space
+# ============================================================
+
+def start_workspace(
+    context,
+    jwt,
+    workspace
+):
+
+    config = workspace.get(
+        "config",
+        {}
+    )
+
+    labels = workspace.get(
+        "labels",
+        {}
+    )
+
+    workspace_id = (
+        config.get("id")
+        or workspace.get("id")
+        or DEVSPACE_ID
+    )
+
+    display_name = (
+        labels.get("displayname")
+        or labels.get("displayName")
+        or DEVSPACE_NAME
+    )
+
+    url = (
+        BAS_URL
+        + "/ws-manager/api/v1/workspace/"
+        + workspace_id
+        + "?all=false"
+    )
+
+    log("准备启动 Dev Space...")
+    log(f"Workspace ID：{workspace_id}")
+
+    payload = {
+        "suspended": False,
+        "WorkspaceDisplayName": display_name
+    }
+
+    response = context.request.put(
+        url,
+        headers={
+            "X-Approuter-Authorization":
+                f"Bearer {jwt}",
+            "Content-Type":
+                "application/json"
+        },
+        data=json.dumps(payload),
+        timeout=60000
+    )
+
+    log(
+        f"启动 API HTTP 状态码：{response.status}"
+    )
+
+    if response.status not in [200, 201, 202]:
+
+        log(
+            "启动 Dev Space 失败："
+        )
+
+        log(
+            response.text()[:3000]
+        )
+
+        return False
+
+    log("启动请求已经发送。")
+
+    return True
+
+
+# ============================================================
+# 等待 RUNNING
+# ============================================================
+
+def wait_until_running(
+    context,
+    jwt,
+    timeout_seconds=300
+):
+
+    log("等待 Dev Space 进入 RUNNING...")
+
+    start_time = time.time()
+
+    while (
+        time.time() - start_time
+        < timeout_seconds
+    ):
+
+        workspace = get_workspace(
+            context,
+            jwt
+        )
+
+        if not workspace:
+
+            time.sleep(10)
+            continue
+
+        status = get_status(
+            workspace
+        )
+
+        log(
+            f"当前 Dev Space 状态：{status}"
+        )
+
+        if status in [
+            "RUNNING",
+            "STARTED"
+        ]:
+
+            log(
+                "Dev Space 已经 RUNNING！"
+            )
+
+            return workspace
+
+        if status in [
+            "ERROR",
+            "FAILED"
+        ]:
+
+            log(
+                "Dev Space 启动失败。"
+            )
+
+            return None
+
+        time.sleep(10)
+
+    log(
+        "等待 Dev Space 启动超时。"
+    )
+
+    return None
+
+
+# ============================================================
+# 打开 Workspace
+# ============================================================
+
+def open_workspace(
+    page,
+    workspace
+):
+
+    log("准备访问 Workspace...")
+
+    workspace_id = (
+        workspace
+        .get("config", {})
+        .get("id")
+        or DEVSPACE_ID
+    )
+
+    # BAS Workspace URL
+    workspace_url = (
+        BAS_URL
+        + "/?workspace="
+        + workspace_id
+    )
+
+    log(
+        f"Workspace URL：{workspace_url}"
+    )
+
+    try:
+
+        page.goto(
+            workspace_url,
+            wait_until="domcontentloaded",
+            timeout=120000
+        )
+
+        page.wait_for_timeout(10000)
+
+        log(
+            f"Workspace 页面：{page.url}"
+        )
+
+        # 再访问一次当前页面
+        # 产生实际 HTTP 活动
+        page.reload(
+            wait_until="domcontentloaded",
             timeout=120000
         )
 
         page.wait_for_timeout(5000)
 
-    log(f"登录完成，当前地址：{page.url}")
-
-
-def open_workspace_manager(page):
-    manager_url = BAS_URL + "/workspace-manager-ui/"
-
-    log("打开 Dev Space Manager...")
-    page.goto(
-        manager_url,
-        wait_until="domcontentloaded",
-        timeout=120000
-    )
-
-    page.wait_for_timeout(5000)
-
-    log(f"Dev Space Manager 地址：{page.url}")
-
-
-def find_devspace(page):
-    log(f"寻找 Dev Space：{BAS_DEVSPACE}")
-
-    try:
-        row = page.locator(
-            f'div.dev-spaces-row:has-text("{BAS_DEVSPACE}")'
-        ).first
-
-        row.wait_for(
-            state="visible",
-            timeout=30000
+        log(
+            "Workspace 活动完成。"
         )
 
-        log("找到目标 Dev Space。")
-        return row
-
-    except PlaywrightTimeoutError:
-        log("找不到目标 Dev Space。")
-        return None
-
-
-def get_status(row):
-    for status in ["RUNNING", "STARTING", "STOPPED", "STOPPING", "ERROR"]:
-
-        try:
-            element = row.locator(
-                f'div.text-center a:has-text("{status}")'
-            )
-
-            if element.is_visible(timeout=2000):
-                return status
-
-        except Exception:
-            pass
-
-    return "UNKNOWN"
-
-
-def start_devspace(page, row):
-    status = get_status(row)
-
-    log(f"当前 Dev Space 状态：{status}")
-
-    if status == "RUNNING":
-        log("Dev Space 已经是 RUNNING，无需启动。")
         return True
 
-    if status == "STARTING":
-        log("Dev Space 正在启动，等待...")
-    elif status == "STOPPING":
-        log("Dev Space 正在停止，等待...")
-    elif status == "STOPPED":
-
-        log("Dev Space 已停止，准备点击启动按钮...")
-
-        try:
-            button = row.locator(
-                'button[id^="startButton"]'
-            ).first
-
-            button.wait_for(
-                state="visible",
-                timeout=15000
-            )
-
-            button.click()
-
-            log("已经点击启动按钮。")
-
-        except Exception as e:
-            log(f"点击启动按钮失败：{e}")
-            return False
-
-    elif status == "ERROR":
-        log("Dev Space 当前为 ERROR 状态，无法正常自动启动。")
-        return False
-
-    # 等待启动完成
-    for i in range(60):
-
-        time.sleep(5)
-
-        status = get_status(row)
+    except Exception as e:
 
         log(
-            f"等待 Dev Space 启动 "
-            f"({i + 1}/60)，当前状态：{status}"
+            f"Workspace 访问异常：{e}"
         )
 
-        if status == "RUNNING":
-            log("================================")
-            log("Dev Space 已成功启动！")
-            log("================================")
-            return True
-
-        if status == "ERROR":
-            log("Dev Space 启动失败，状态变为 ERROR。")
-            return False
-
-    log("等待启动超时。")
-    return False
+        return False
 
 
-def touch_workspace(page, row):
-    """
-    启动后打开 Dev Space。
-    这样可以产生一次实际的 workspace 访问。
-    """
-
-    try:
-        log("打开 Dev Space Workspace...")
-
-        link = row.locator(
-            f'a:has-text("{BAS_DEVSPACE}")'
-        ).first
-
-        if link.count() > 0:
-            link.click()
-
-            page.wait_for_timeout(15000)
-
-            log("Workspace 已打开/访问。")
-
-    except Exception as e:
-        log(f"打开 Workspace 时出现提示：{e}")
-
+# ============================================================
+# 主程序
+# ============================================================
 
 def main():
 
-    if not BAS_USERNAME:
-        print("错误：没有设置 BAS_USERNAME")
-        sys.exit(1)
+    log("==========================================")
+    log(" SAP BAS Dev Space Keep Alive")
+    log("==========================================")
 
-    if not BAS_PASSWORD:
-        print("错误：没有设置 BAS_PASSWORD")
-        sys.exit(1)
-
-    log("================================")
-    log("SAP BAS Dev Space Keep Alive")
-    log("================================")
-    log(f"BAS：{BAS_URL}")
-    log(f"Dev Space：{BAS_DEVSPACE}")
+    check_environment()
 
     with sync_playwright() as p:
 
@@ -274,59 +583,207 @@ def main():
 
         try:
 
+            # ------------------------------------------------
+            # 1. 登录
+            # ------------------------------------------------
+
             login(page)
 
-            open_workspace_manager(page)
+            # ------------------------------------------------
+            # 2. 获取 JWT
+            # ------------------------------------------------
 
-            row = find_devspace(page)
+            jwt = get_jwt(context)
 
-            if row is None:
+            if not jwt:
+
+                log(
+                    "获取 JWT 失败，任务结束。"
+                )
+
                 sys.exit(1)
 
-            success = start_devspace(
-                page,
-                row
+            log(
+                "JWT 获取成功。"
             )
 
-            if not success:
+            # ------------------------------------------------
+            # 3. 查询 Dev Space
+            # ------------------------------------------------
+
+            workspace = get_workspace(
+                context,
+                jwt
+            )
+
+            if not workspace:
+
                 sys.exit(1)
 
-            # 刷新一次页面，确认状态
-            page.wait_for_timeout(5000)
-            page.reload(
-                wait_until="domcontentloaded",
-                timeout=120000
+            # ------------------------------------------------
+            # 4. 检查状态
+            # ------------------------------------------------
+
+            status = get_status(
+                workspace
             )
 
-            page.wait_for_timeout(5000)
+            log(
+                f"Dev Space {DEVSPACE_NAME} 当前状态：{status}"
+            )
 
-            row = find_devspace(page)
+            # ------------------------------------------------
+            # 5. STOPPED → 启动
+            # ------------------------------------------------
 
-            if row:
-                final_status = get_status(row)
-                log(f"最终状态：{final_status}")
+            if status in [
+                "STOPPED",
+                "SUSPENDED"
+            ]:
 
-                if final_status == "RUNNING":
-                    touch_workspace(
+                log(
+                    "检测到 Dev Space 已停止。"
+                )
+
+                if not start_workspace(
+                    context,
+                    jwt,
+                    workspace
+                ):
+
+                    sys.exit(1)
+
+                workspace = wait_until_running(
+                    context,
+                    jwt
+                )
+
+                if not workspace:
+
+                    sys.exit(1)
+
+            # ------------------------------------------------
+            # 6. STARTING → 等待
+            # ------------------------------------------------
+
+            elif status in [
+                "STARTING",
+                "CREATING"
+            ]:
+
+                log(
+                    "Dev Space 正在启动，继续等待..."
+                )
+
+                workspace = wait_until_running(
+                    context,
+                    jwt
+                )
+
+                if not workspace:
+
+                    sys.exit(1)
+
+            # ------------------------------------------------
+            # 7. RUNNING
+            # ------------------------------------------------
+
+            elif status in [
+                "RUNNING",
+                "STARTED"
+            ]:
+
+                log(
+                    "Dev Space 已经处于 RUNNING。"
+                )
+
+            else:
+
+                log(
+                    f"检测到未知状态：{status}"
+                )
+
+            # ------------------------------------------------
+            # 8. 再次确认
+            # ------------------------------------------------
+
+            workspace = get_workspace(
+                context,
+                jwt
+            )
+
+            if workspace:
+
+                final_status = get_status(
+                    workspace
+                )
+
+                log(
+                    f"最终状态：{final_status}"
+                )
+
+                if final_status in [
+                    "RUNNING",
+                    "STARTED"
+                ]:
+
+                    # ----------------------------------------
+                    # 9. 打开 Workspace
+                    # ----------------------------------------
+
+                    open_workspace(
                         page,
-                        row
+                        workspace
                     )
 
-            log("任务完成。")
+                    log(
+                        "=========================================="
+                    )
+
+                    log(
+                        " Keep Alive 执行成功"
+                    )
+
+                    log(
+                        " Dev Space：RUNNING"
+                    )
+
+                    log(
+                        " Workspace：已访问"
+                    )
+
+                    log(
+                        "=========================================="
+                    )
+
+                else:
+
+                    log(
+                        "最终状态不是 RUNNING。"
+                    )
+
+                    sys.exit(1)
+
+            else:
+
+                sys.exit(1)
 
         except Exception as e:
 
-            log("发生异常：")
-            log(str(e))
+            log(
+                "程序发生异常："
+            )
 
-            # 输出当前页面，方便 GitHub Actions 调试
+            log(
+                str(e)
+            )
+
             try:
+
                 page.screenshot(
                     path="bas_error.png",
                     full_page=True
                 )
-
-                log("错误截图已保存为 bas_error.png")
 
             except Exception:
                 pass
