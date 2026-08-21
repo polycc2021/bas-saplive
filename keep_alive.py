@@ -1,7 +1,6 @@
 import os
 import sys
 import smtplib
-import time
 import urllib.request
 import urllib.parse
 from email.mime.text import MIMEText
@@ -61,46 +60,6 @@ if not all([BAS_URL, SAP_EMAIL, SAP_PASSWORD]):
     notify("SAP BAS 保活配置异常", err)
     sys.exit(1)
 
-# 穿透 Shadow DOM 与 UI5 组件的通用 JS 点击脚本
-JS_CLICK_SCRIPT = """
-() => {
-    function deepScan(root) {
-        if (!root) return false;
-        const elements = root.querySelectorAll('*');
-        for (let el of elements) {
-            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-            const title = (el.getAttribute('title') || '').toLowerCase();
-            const icon = (el.getAttribute('icon') || '').toLowerCase();
-            const name = (el.getAttribute('name') || '').toLowerCase();
-            const id = (el.id || '').toLowerCase();
-
-            // 匹配包含 start 或 play 的启动图标/按钮
-            if (aria.includes('start') || title.includes('start') || 
-                icon.includes('play') || name.includes('play') || id.includes('start')) {
-                
-                // 双重触发原生点击事件
-                el.click();
-                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                return true;
-            }
-
-            // 递归穿透 Shadow DOM
-            if (el.shadowRoot) {
-                if (deepScan(el.shadowRoot)) return true;
-            }
-        }
-        return false;
-    }
-    return deepScan(document);
-}
-"""
-
-JS_CHECK_RUNNING = """
-() => {
-    return (document.body.innerText || '').includes('RUNNING');
-}
-"""
-
 def run():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -117,7 +76,6 @@ def run():
             # 检测是否进入 SAP 登录界面
             if "accounts.sap.com" in page.url or "idp" in page.url or page.locator("input[name='j_username']").is_visible():
                 print("🔑 检测到登录界面，开始自动输入凭据...")
-                
                 user_input = page.locator("input[name='j_username'], #j_username, input[type='email']").first
                 user_input.fill(SAP_EMAIL)
                 
@@ -131,53 +89,93 @@ def run():
 
                 submit_btn = page.locator("#logOnFormSubmit, button[type='submit'], button:has-text('Log On')").first
                 submit_btn.click()
-                
-                print("已提交登录信息，等待页面完全加载...")
+                print("已提交登录信息...")
                 page.wait_for_timeout(10000)
 
-            print("✅ 登录成功，开始全框架 (iframe) 轮询扫描 Dev Space 状态...")
-            
-            clicked = False
-            is_running = False
+            print("✅ 登录动作已完成，等待 Dev Space 管理页完全加载...")
+            page.wait_for_timeout(15000)
 
-            # 最长等待 30 秒，每 3 秒遍历所有 iframe 扫描一次
-            for attempt in range(10):
-                time.sleep(3)
-                frames = page.frames
-                print(f"🔄 第 {attempt + 1} 次扫描，当前包含 {len(frames)} 个页面框架...")
+            # 打印控制台诊断信息
+            print(f"📍 当前页面真实 URL: {page.url}")
+            print(f"📄 当前页面 Title: {page.title()}")
 
-                # 1. 检查是否已经是 RUNNING 状态
-                for frame in frames:
-                    try:
-                        if frame.evaluate(JS_CHECK_RUNNING):
-                            is_running = True
-                            break
-                    except Exception:
-                        pass
+            # 自动清理可能的弹窗遮挡
+            close_btns = page.locator("button:has-text('Accept'), button:has-text('OK'), button:has-text('Dismiss'), button:has-text('Close')")
+            if close_btns.count() > 0 and close_btns.first.is_visible():
+                print("🧹 检测到弹窗，尝试自动关闭...")
+                close_btns.first.click()
+                page.wait_for_timeout(2000)
 
-                if is_running:
-                    print("✅ 检测到 Dev Space 已经处于 RUNNING 状态，无需点击。")
-                    page.wait_for_timeout(3000)
-                    return
+            # 1. 检查是否处于 RUNNING 状态
+            is_running = page.locator("text=RUNNING").count() > 0 or page.evaluate("() => (document.body.innerText || '').includes('RUNNING')")
+            if is_running:
+                print("✅ 检测到 Dev Space 处于 RUNNING (运行中) 状态，无需点击。")
+                page.wait_for_timeout(3000)
+                return
 
-                # 2. 尝试在所有 iframe 里寻找大三角启动图标
-                for frame in frames:
-                    try:
-                        if frame.evaluate(JS_CLICK_SCRIPT):
-                            clicked = True
-                            break
-                    except Exception:
-                        pass
-
-                if clicked:
-                    print("▶️ 成功在框架中找到并点击大三角启动图标！")
-                    print("等待 15 秒等待系统响应...")
+            # 2. 定位策略 A：直接锁定 STOPPED 所在的行，点击该行右侧的启动图标
+            print("🔍 尝试定位包含 STOPPED 状态的 Dev Space 行...")
+            stopped_element = page.locator("text=STOPPED").first
+            if stopped_element.is_visible():
+                print("🎯 成功精准找到 STOPPED 状态标识！尝试提取所在的整行列表项...")
+                row = stopped_element.locator("xpath=ancestor::*[contains(@class, 'row') or contains(@class, 'item') or self::tr or self::div][1]")
+                start_in_row = row.locator("[title*='Start' i], [aria-label*='Start' i], ui5-button, button, svg").first
+                if start_in_row.is_visible():
+                    print("▶️ 在 STOPPED 行内定位到大三角启动按钮，强行触发点击！")
+                    start_in_row.click(force=True)
                     page.wait_for_timeout(15000)
-                    print("🎉 启动指令已成功提交！")
+                    print("🎉 启动指令已成功发送！")
                     return
 
-            if not clicked and not is_running:
-                raise Exception("轮询 30 秒未找到 Start 启动图标，可能页面未加载完成或停留在错误界面。")
+            # 3. 定位策略 B：全局模糊多属性强行点击
+            print("🔍 执行全局多属性穿透搜索...")
+            candidates = page.locator("[title*='Start' i], [aria-label*='Start' i], [icon*='play' i], ui5-button[icon='play']")
+            count = candidates.count()
+            print(f"📊 找到 {count} 个候选启动按钮")
+
+            if count > 0:
+                for i in range(count):
+                    item = candidates.nth(i)
+                    if item.is_visible():
+                        print(f"▶️ 正在强行点击第 {i+1} 个候选启动按钮...")
+                        item.click(force=True)
+                        page.wait_for_timeout(15000)
+                        print("🎉 启动指令已成功发送！")
+                        return
+
+            # 4. 定位策略 C：原生 JS 穿透点击
+            print("🔍 执行原生 JS 深度节点扫描...")
+            click_success = page.evaluate("""() => {
+                function clickStart(root) {
+                    if (!root) return false;
+                    const all = root.querySelectorAll('*');
+                    for (let el of all) {
+                        const title = (el.getAttribute('title') || '').toLowerCase();
+                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                        const icon = (el.getAttribute('icon') || '').toLowerCase();
+                        
+                        if (title.includes('start') || aria.includes('start') || icon.includes('play')) {
+                            el.click();
+                            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                            return true;
+                        }
+                        if (el.shadowRoot && clickStart(el.shadowRoot)) return true;
+                    }
+                    return false;
+                }
+                return clickStart(document);
+            }""")
+
+            if click_success:
+                print("▶️ 原生 JS 成功触发出启动按钮点击！")
+                page.wait_for_timeout(15000)
+                print("🎉 启动指令已成功发送！")
+                return
+
+            # 若上述全部失效，在控制台打印当前页面文本，直接展示真实原因
+            body_text = page.evaluate("() => (document.body.innerText || '').slice(0, 400)")
+            print(f"⚠️ 页面前 400 字文本内容预览:\n{body_text}")
+            raise Exception("未找到 STOPPED 状态或 Start 按钮，请查看上方日志打印的页面预览。")
 
         except Exception as e:
             err_body = f"保活过程异常:\n{str(e)}"
