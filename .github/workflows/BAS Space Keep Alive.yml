@@ -1,8 +1,7 @@
-name: BAS Space Keep Alive
+name: SAP BAS Dev Space Keep Alive
 
 on:
   schedule:
-    # 公开库额度无限，每 20 分钟运行一次
     - cron: '*/20 * * * *'
   workflow_dispatch:
 
@@ -29,7 +28,8 @@ jobs:
     - name: 执行保活脚本
       env:
         BAS_URL: ${{ secrets.BAS_URL }}
-        SAP_STORAGE_STATE: ${{ secrets.SAP_STORAGE_STATE }}
+        SAP_EMAIL: ${{ secrets.SAP_EMAIL }}
+        SAP_PASSWORD: ${{ secrets.SAP_PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
