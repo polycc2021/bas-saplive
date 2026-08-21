@@ -94,38 +94,54 @@ def run():
                 print("已提交登录信息，等待页面重定向...")
                 page.wait_for_timeout(10000)
 
-            print("✅ 登录成功，等待 Dev Space 列表渲染...")
-            
-            # 兼容 UI5 框架的加载过程
+            print("✅ 登录成功，等待 Dev Space 界面完整渲染...")
             page.wait_for_timeout(15000)
 
-            # 通配定位：精准搜寻带 Start 属性或三角 Play 图标的 UI5 组件/按钮
-            start_locator = page.locator(
-                "[title*='Start'], [aria-label*='Start'], "
-                "ui5-button[icon*='play'], ui5-icon[name*='play'], "
-                "*[data-aria-label*='Start']"
-            )
+            # 1. 优先校验是否已经是 RUNNING 状态
+            is_running = page.evaluate("""() => {
+                const text = document.body.innerText || '';
+                return text.includes('RUNNING');
+            }""")
 
-            # 校验是否已在 RUNNING 状态
-            is_running = page.locator("text=RUNNING, [title*='Stop'], [aria-label*='Stop']").count() > 0
+            if is_running:
+                print("✅ 检测到 Dev Space 已经处于 RUNNING (运行中) 状态，无需点击开机。")
+                page.wait_for_timeout(5000)
+                return
 
-            if start_locator.count() > 0 and start_locator.first.is_visible():
-                print("▶️ 精准找到启动按钮/大三角图标，正在点击开启 Dev Space...")
-                start_locator.first.click()
-                print("已成功点击！等待 15 秒确认启动...")
+            # 2. 使用 JavaScript 深度递归扫描整个 DOM 与 Shadow DOM 寻找并点击 Start 图标
+            print("🔍 启动 Shadow DOM 深度扫描器寻找大三角启动图标...")
+            clicked = page.evaluate("""() => {
+                function deepFindAndClick(root) {
+                    const elements = root.querySelectorAll('*');
+                    for (let el of elements) {
+                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                        const title = (el.getAttribute('title') || '').toLowerCase();
+                        const icon = (el.getAttribute('icon') || '').toLowerCase();
+                        const name = (el.getAttribute('name') || '').toLowerCase();
+
+                        // 匹配属性中包含 start 或 play 的图标/按钮
+                        if (aria.includes('start') || title.includes('start') || icon.includes('play') || name.includes('play')) {
+                            el.click();
+                            return true;
+                        }
+
+                        // 递归深入 Shadow DOM
+                        if (el.shadowRoot) {
+                            if (deepFindAndClick(el.shadowRoot)) return true;
+                        }
+                    }
+                    return false;
+                }
+                return deepFindAndClick(document);
+            }""")
+
+            if clicked:
+                print("▶️ 成功触发深度 Shadow DOM 点击！大三角启动按钮已被点击。")
+                print("等待 15 秒确认启动流程...")
                 page.wait_for_timeout(15000)
                 print("🎉 保活与开机指令已成功提交！")
-            elif is_running:
-                print("✅ 检测到 Dev Space 已经处于 RUNNING 状态，无需点击开机。")
-                page.wait_for_timeout(5000)
             else:
-                # 备用方案：尝试直接按 title 属性点击
-                try:
-                    print("⚠️ 尝试使用备用方法点击 Start 图标...")
-                    page.get_by_title("Start", exact=False).first.click()
-                    print("🎉 备用点击成功！")
-                except Exception:
-                    raise Exception("无法定位到三角启动图标 (Start)，请检查 failure.png 截图确定页面状态。")
+                raise Exception("深度扫描未在页面或 Shadow DOM 中找到包含 'Start' 或 'play' 的可点击元素！")
 
         except Exception as e:
             err_body = f"保活过程异常:\n{str(e)}"
