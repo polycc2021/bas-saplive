@@ -1,164 +1,343 @@
 import os
 import sys
-import smtplib
-import urllib.request
-import urllib.parse
-from email.mime.text import MIMEText
-from playwright.sync_api import sync_playwright
+import time
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-BAS_URL = os.environ.get("BAS_URL")
-SAP_EMAIL = os.environ.get("SAP_EMAIL")
-SAP_PASSWORD = os.environ.get("SAP_PASSWORD")
 
-TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
-TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
+BAS_URL = os.getenv(
+    "BAS_URL",
+    "https://9a18409etrial.us10cf.trial.applicationstudio.cloud.sap"
+)
 
-SMTP_SERVER = os.environ.get("SMTP_SERVER")
-SMTP_PORT = os.environ.get("SMTP_PORT", "465")
-SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASS = os.environ.get("SAP_PASSWORD")
-TO_EMAIL = os.environ.get("TO_EMAIL")
+BAS_USERNAME = os.getenv("BAS_USERNAME")
+BAS_PASSWORD = os.getenv("BAS_PASSWORD")
 
-def notify(subject: str, message: str):
-    """触发通知推送"""
-    print(f"📢 触发通知 -> 主题: {subject}")
-    if TG_BOT_TOKEN and TG_CHAT_ID:
+BAS_DEVSPACE = os.getenv("BAS_DEVSPACE", "yesdo")
+BAS_PROFILE = os.getenv("BAS_PROFILE", "")
+
+HEADLESS = True
+
+
+def log(message):
+    print(f"[BAS] {message}", flush=True)
+
+
+def login(page):
+    log("打开 SAP Business Application Studio...")
+
+    page.goto(
+        BAS_URL + "/index.html",
+        wait_until="domcontentloaded",
+        timeout=120000
+    )
+
+    page.wait_for_timeout(3000)
+
+    # 如果已经登录，直接进入
+    if "workspace-manager" in page.url:
+        log("已经处于登录状态。")
+        return
+
+    # 检查是否出现登录页面
+    if page.get_by_label("Email or User Name").count() == 0:
+
+        # 如果有身份提供商选择页面
+        if BAS_PROFILE:
+            log(f"选择身份提供商：{BAS_PROFILE}")
+
+            try:
+                page.get_by_text(
+                    BAS_PROFILE,
+                    exact=False
+                ).first.click(timeout=15000)
+            except PlaywrightTimeoutError:
+                log("没有找到指定身份提供商，继续尝试当前页面。")
+
+        page.wait_for_timeout(2000)
+
+    # 输入用户名
+    if page.get_by_label("Email or User Name").count() > 0:
+
+        log("输入 BAS 用户名...")
+
+        page.get_by_label(
+            "Email or User Name"
+        ).fill(BAS_USERNAME)
+
+        page.get_by_label(
+            "Password"
+        ).fill(BAS_PASSWORD)
+
+        # Keep me signed in
         try:
-            tg_url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-            payload = urllib.parse.urlencode({
-                "chat_id": TG_CHAT_ID,
-                "text": f"⚠️ *{subject}*\n\n{message}",
-                "parse_mode": "Markdown"
-            }).encode("utf-8")
-            req = urllib.request.Request(tg_url, data=payload)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    print("✅ Telegram 警报已发送！")
-        except Exception as e:
-            print(f"❌ Telegram 发送失败: {e}")
+            checkbox = page.get_by_text(
+                "Keep me signed in",
+                exact=False
+            )
 
-    if SMTP_SERVER and SMTP_USER and SMTP_PASS and TO_EMAIL:
-        try:
-            msg = MIMEText(message, "plain", "utf-8")
-            msg["Subject"] = subject
-            msg["From"] = SMTP_USER
-            msg["To"] = TO_EMAIL
-            port = int(SMTP_PORT)
-            server = smtplib.SMTP_SSL(SMTP_SERVER, port, timeout=10) if port == 465 else smtplib.SMTP(SMTP_SERVER, port, timeout=10)
-            if port != 465:
-                server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_USER, [TO_EMAIL], msg.as_string())
-            server.quit()
-            print("✅ 邮件警报已发送！")
-        except Exception as e:
-            print(f"❌ 邮件发送失败: {e}")
+            if checkbox.count() > 0:
+                checkbox.first.click()
+        except Exception:
+            pass
 
-if not all([BAS_URL, SAP_EMAIL, SAP_PASSWORD]):
-    err = "错误：缺少必要环境变量 (BAS_URL, SAP_EMAIL 或 SAP_PASSWORD)"
-    print(err)
-    notify("SAP BAS 保活配置异常", err)
-    sys.exit(1)
+        page.wait_for_timeout(500)
 
-def run():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 900}
+        log("提交登录...")
+
+        page.get_by_text(
+            "Continue",
+            exact=True
+        ).click()
+
+        page.wait_for_load_state(
+            "domcontentloaded",
+            timeout=120000
         )
+
+        page.wait_for_timeout(5000)
+
+    log(f"登录完成，当前地址：{page.url}")
+
+
+def open_workspace_manager(page):
+    manager_url = BAS_URL + "/workspace-manager-ui/"
+
+    log("打开 Dev Space Manager...")
+    page.goto(
+        manager_url,
+        wait_until="domcontentloaded",
+        timeout=120000
+    )
+
+    page.wait_for_timeout(5000)
+
+    log(f"Dev Space Manager 地址：{page.url}")
+
+
+def find_devspace(page):
+    log(f"寻找 Dev Space：{BAS_DEVSPACE}")
+
+    try:
+        row = page.locator(
+            f'div.dev-spaces-row:has-text("{BAS_DEVSPACE}")'
+        ).first
+
+        row.wait_for(
+            state="visible",
+            timeout=30000
+        )
+
+        log("找到目标 Dev Space。")
+        return row
+
+    except PlaywrightTimeoutError:
+        log("找不到目标 Dev Space。")
+        return None
+
+
+def get_status(row):
+    for status in ["RUNNING", "STARTING", "STOPPED", "STOPPING", "ERROR"]:
+
+        try:
+            element = row.locator(
+                f'div.text-center a:has-text("{status}")'
+            )
+
+            if element.is_visible(timeout=2000):
+                return status
+
+        except Exception:
+            pass
+
+    return "UNKNOWN"
+
+
+def start_devspace(page, row):
+    status = get_status(row)
+
+    log(f"当前 Dev Space 状态：{status}")
+
+    if status == "RUNNING":
+        log("Dev Space 已经是 RUNNING，无需启动。")
+        return True
+
+    if status == "STARTING":
+        log("Dev Space 正在启动，等待...")
+    elif status == "STOPPING":
+        log("Dev Space 正在停止，等待...")
+    elif status == "STOPPED":
+
+        log("Dev Space 已停止，准备点击启动按钮...")
+
+        try:
+            button = row.locator(
+                'button[id^="startButton"]'
+            ).first
+
+            button.wait_for(
+                state="visible",
+                timeout=15000
+            )
+
+            button.click()
+
+            log("已经点击启动按钮。")
+
+        except Exception as e:
+            log(f"点击启动按钮失败：{e}")
+            return False
+
+    elif status == "ERROR":
+        log("Dev Space 当前为 ERROR 状态，无法正常自动启动。")
+        return False
+
+    # 等待启动完成
+    for i in range(60):
+
+        time.sleep(5)
+
+        status = get_status(row)
+
+        log(
+            f"等待 Dev Space 启动 "
+            f"({i + 1}/60)，当前状态：{status}"
+        )
+
+        if status == "RUNNING":
+            log("================================")
+            log("Dev Space 已成功启动！")
+            log("================================")
+            return True
+
+        if status == "ERROR":
+            log("Dev Space 启动失败，状态变为 ERROR。")
+            return False
+
+    log("等待启动超时。")
+    return False
+
+
+def touch_workspace(page, row):
+    """
+    启动后打开 Dev Space。
+    这样可以产生一次实际的 workspace 访问。
+    """
+
+    try:
+        log("打开 Dev Space Workspace...")
+
+        link = row.locator(
+            f'a:has-text("{BAS_DEVSPACE}")'
+        ).first
+
+        if link.count() > 0:
+            link.click()
+
+            page.wait_for_timeout(15000)
+
+            log("Workspace 已打开/访问。")
+
+    except Exception as e:
+        log(f"打开 Workspace 时出现提示：{e}")
+
+
+def main():
+
+    if not BAS_USERNAME:
+        print("错误：没有设置 BAS_USERNAME")
+        sys.exit(1)
+
+    if not BAS_PASSWORD:
+        print("错误：没有设置 BAS_PASSWORD")
+        sys.exit(1)
+
+    log("================================")
+    log("SAP BAS Dev Space Keep Alive")
+    log("================================")
+    log(f"BAS：{BAS_URL}")
+    log(f"Dev Space：{BAS_DEVSPACE}")
+
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=HEADLESS
+        )
+
+        context = browser.new_context(
+            viewport={
+                "width": 1366,
+                "height": 768
+            }
+        )
+
         page = context.new_page()
 
         try:
-            print(f"正在访问 BAS: {BAS_URL}")
-            page.goto(BAS_URL, wait_until="domcontentloaded", timeout=60000)
 
-            # 1. 登录处理
-            if "accounts.sap.com" in page.url or "idp" in page.url or page.locator("input[name='j_username']").is_visible():
-                print("🔑 检测到登录界面，开始自动输入凭据...")
-                user_input = page.locator("input[name='j_username'], #j_username, input[type='email']").first
-                user_input.fill(SAP_EMAIL)
-                
-                continue_btn = page.locator("button:has-text('Continue'), #displayNameSubmit")
-                if continue_btn.is_visible():
-                    continue_btn.click()
-                    page.wait_for_timeout(2000)
+            login(page)
 
-                pass_input = page.locator("input[name='j_password'], #j_password, input[type='password']").first
-                pass_input.fill(SAP_PASSWORD)
+            open_workspace_manager(page)
 
-                submit_btn = page.locator("#logOnFormSubmit, button[type='submit'], button:has-text('Log On')").first
-                submit_btn.click()
-                print("已提交登录信息，等待页面重定向...")
+            row = find_devspace(page)
 
-            # 2. 显式强力等待 Dev Space 核心标志加载完成
-            print("✅ 等待 Dev Spaces 管理列表完全渲染...")
-            page.wait_for_selector("text=Create Dev Space", timeout=60000)
-            page.wait_for_timeout(5000) # 缓冲 5 秒让状态图标渲染完
+            if row is None:
+                sys.exit(1)
 
-            # 3. 检查是否已经是 RUNNING 状态
-            if page.locator("text=RUNNING").is_visible():
-                print("✅ 检测到 Dev Space 处于 RUNNING (运行中) 状态，无需重复开启。")
-                page.wait_for_timeout(3000)
-                return
+            success = start_devspace(
+                page,
+                row
+            )
 
-            # 4. 精准寻找并点击 Dev Space 右侧的大三角启动图标
-            print("🔍 正在定位 Dev Space 启动图标...")
-            
-            start_clicked = False
+            if not success:
+                sys.exit(1)
 
-            # 策略 A：按 title / aria-label 属性匹配 Start 按钮
-            start_btn = page.locator("[title*='Start' i], [aria-label*='Start' i]").first
-            if start_btn.is_visible():
-                print("▶️ [策略 A] 成功定位到 Start 属性图标，发送点击指令...")
-                start_btn.click(force=True)
-                start_clicked = True
+            # 刷新一次页面，确认状态
+            page.wait_for_timeout(5000)
+            page.reload(
+                wait_until="domcontentloaded",
+                timeout=120000
+            )
 
-            # 策略 B：定位 STOPPED 状态单元格所在的整行，强行点击右侧按钮/图标
-            if not start_clicked and page.locator("text=STOPPED").is_visible():
-                print("▶️ [策略 B] 锁定 STOPPED 卡片整行，点击操作区启动按钮...")
-                row = page.locator("text=STOPPED").locator("xpath=ancestor::*[contains(@class, 'row') or contains(@class, 'card') or contains(@class, 'item') or self::div][2]")
-                action_btn = row.locator("button, ui5-button, [role='button'], svg").first
-                action_btn.click(force=True)
-                start_clicked = True
+            page.wait_for_timeout(5000)
 
-            # 策略 C：备用原生 JS 深度遍历点击
-            if not start_clicked:
-                print("▶️ [策略 C] 执行 Shadow DOM 深度扫描点击...")
-                start_clicked = page.evaluate("""() => {
-                    function findPlay(root) {
-                        if (!root) return false;
-                        const elems = root.querySelectorAll('*');
-                        for (let el of elems) {
-                            const t = (el.getAttribute('title') || '').toLowerCase();
-                            const a = (el.getAttribute('aria-label') || '').toLowerCase();
-                            if (t.includes('start') || a.includes('start')) {
-                                el.click();
-                                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                                return true;
-                            }
-                            if (el.shadowRoot && findPlay(el.shadowRoot)) return true;
-                        }
-                        return false;
-                    }
-                    return findPlay(document);
-                }""")
+            row = find_devspace(page)
 
-            if start_clicked:
-                print("🎉 成功向 SAP 发送启动指令！等待 15 秒确认开机流程...")
-                page.wait_for_timeout(15000)
-                print("🎉 保活与开机任务顺利完成！")
-            else:
-                raise Exception("页面已加载，但未能成功点击 Dev Space 启动图标。")
+            if row:
+                final_status = get_status(row)
+                log(f"最终状态：{final_status}")
+
+                if final_status == "RUNNING":
+                    touch_workspace(
+                        page,
+                        row
+                    )
+
+            log("任务完成。")
 
         except Exception as e:
-            err_body = f"保活过程异常:\n{str(e)}"
-            print(f"❌ {err_body}")
-            page.screenshot(path="failure.png")
-            notify("❌ SAP BAS 保活脚本未成功开启 Dev Space", err_body)
+
+            log("发生异常：")
+            log(str(e))
+
+            # 输出当前页面，方便 GitHub Actions 调试
+            try:
+                page.screenshot(
+                    path="bas_error.png",
+                    full_page=True
+                )
+
+                log("错误截图已保存为 bas_error.png")
+
+            except Exception:
+                pass
+
             sys.exit(1)
+
         finally:
+
+            context.close()
             browser.close()
 
+
 if __name__ == "__main__":
-    run()
+    main()
