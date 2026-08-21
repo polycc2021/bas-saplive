@@ -2,13 +2,12 @@ import os
 import sys
 import time
 import json
-import requests
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 # ============================================================
-# 基本配置
+# 配置
 # ============================================================
 
 BAS_URL = os.getenv(
@@ -29,38 +28,202 @@ DEVSPACE_ID = os.getenv(
     "ws-a2zlg"
 )
 
-HEADLESS = True
-
 
 # ============================================================
 # 日志
 # ============================================================
 
-def log(text):
-    print(f"[BAS] {text}", flush=True)
+def log(message):
+    print(f"[BAS] {message}", flush=True)
 
 
 # ============================================================
-# 检查环境变量
+# 环境检查
 # ============================================================
 
 def check_environment():
 
+    missing = []
+
     if not BAS_USERNAME:
-        log("ERROR: BAS_USERNAME 没有设置")
-        sys.exit(1)
+        missing.append("BAS_USERNAME")
 
     if not BAS_PASSWORD:
-        log("ERROR: BAS_PASSWORD 没有设置")
+        missing.append("BAS_PASSWORD")
+
+    if not BAS_URL:
+        missing.append("BAS_URL")
+
+    if missing:
+        log(
+            "缺少 GitHub Secrets："
+            + ", ".join(missing)
+        )
         sys.exit(1)
 
-    log(f"BAS URL       : {BAS_URL}")
-    log(f"Dev Space     : {DEVSPACE_NAME}")
-    log(f"Dev Space ID  : {DEVSPACE_ID}")
+    log(f"BAS URL      : {BAS_URL}")
+    log(f"Dev Space    : {DEVSPACE_NAME}")
+    log(f"Dev Space ID : {DEVSPACE_ID}")
 
 
 # ============================================================
-# 登录 BAS
+# 判断当前是否为 SAP 登录页面
+# ============================================================
+
+def is_sap_login_page(page):
+
+    url = page.url.lower()
+
+    if "accounts.sap.com" in url:
+        return True
+
+    if "login" in url and "sap" in url:
+        return True
+
+    try:
+
+        if page.locator(
+            'input[type="email"]'
+        ).count() > 0:
+            return True
+
+        if page.locator(
+            'input[name="email"]'
+        ).count() > 0:
+            return True
+
+        if page.locator(
+            'input[type="password"]'
+        ).count() > 0:
+            return True
+
+    except Exception:
+        pass
+
+    return False
+
+
+# ============================================================
+# 找用户名输入框
+# ============================================================
+
+def find_username_input(page):
+
+    selectors = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[name="username"]',
+        'input[name="user"]',
+        'input[autocomplete="username"]',
+        'input[placeholder*="Email"]',
+        'input[placeholder*="email"]',
+        'input[placeholder*="User"]',
+        'input[placeholder*="user"]',
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            ).first
+
+            if locator.is_visible(
+                timeout=1500
+            ):
+
+                return locator
+
+        except Exception:
+            pass
+
+    return None
+
+
+# ============================================================
+# 找密码输入框
+# ============================================================
+
+def find_password_input(page):
+
+    selectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[autocomplete="current-password"]',
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            ).first
+
+            if locator.is_visible(
+                timeout=1500
+            ):
+
+                return locator
+
+        except Exception:
+            pass
+
+    return None
+
+
+# ============================================================
+# 点击 Continue
+# ============================================================
+
+def click_continue(page):
+
+    selectors = [
+        'button:has-text("Continue")',
+        'input[type="submit"]',
+        'button[type="submit"]',
+        'button:has-text("Log On")',
+        'button:has-text("Sign In")',
+        'button:has-text("Sign in")',
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            button = page.locator(
+                selector
+            ).first
+
+            if button.is_visible(
+                timeout=1500
+            ):
+
+                log(
+                    "点击登录页面 Continue/Sign In..."
+                )
+
+                button.click()
+
+                return True
+
+        except Exception:
+            pass
+
+    # 最后尝试 Enter
+    try:
+
+        page.keyboard.press("Enter")
+
+        return True
+
+    except Exception:
+        return False
+
+
+# ============================================================
+# SAP 登录
 # ============================================================
 
 def login(page):
@@ -73,63 +236,207 @@ def login(page):
         timeout=120000
     )
 
+    log(
+        f"初始页面：{page.url}"
+    )
+
+    # --------------------------------------------------------
+    # 等待 SAP 重定向
+    # --------------------------------------------------------
+
     page.wait_for_timeout(5000)
 
-    log(f"当前页面：{page.url}")
-
-    # 如果已经进入 BAS
-    if "workspace-manager" in page.url:
-        log("已经登录 BAS。")
-        return
+    log(
+        f"当前页面：{page.url}"
+    )
 
     # --------------------------------------------------------
-    # 尝试用户名密码登录
+    # 如果没有进入 SAP 登录页
     # --------------------------------------------------------
 
-    try:
+    if not is_sap_login_page(page):
 
-        username_box = page.get_by_label(
-            "Email or User Name"
+        log(
+            "当前页面看起来不是 SAP 登录页面。"
         )
 
-        if username_box.count() > 0:
+    # --------------------------------------------------------
+    # 第一阶段：用户名
+    # --------------------------------------------------------
 
-            log("发现 SAP 登录页面。")
+    username_input = find_username_input(
+        page
+    )
 
-            username_box.fill(
+    if username_input:
+
+        log(
+            "发现 SAP 用户名输入框。"
+        )
+
+        try:
+
+            username_input.fill(
                 BAS_USERNAME
             )
 
-            password_box = page.get_by_label(
-                "Password"
+        except Exception as e:
+
+            log(
+                f"填写用户名失败：{e}"
             )
 
-            password_box.fill(
+            sys.exit(1)
+
+        log(
+            "用户名已经填写。"
+        )
+
+        click_continue(page)
+
+        # 等待进入密码页面
+        page.wait_for_timeout(4000)
+
+    else:
+
+        log(
+            "当前没有找到用户名输入框。"
+        )
+
+    # --------------------------------------------------------
+    # 第二阶段：密码
+    # --------------------------------------------------------
+
+    password_input = find_password_input(
+        page
+    )
+
+    if password_input:
+
+        log(
+            "发现 SAP 密码输入框。"
+        )
+
+        try:
+
+            password_input.fill(
                 BAS_PASSWORD
             )
 
-            log("提交 SAP 登录...")
+        except Exception as e:
 
-            continue_button = page.get_by_text(
-                "Continue",
-                exact=True
+            log(
+                f"填写密码失败：{e}"
             )
 
-            if continue_button.count() > 0:
-                continue_button.click()
-            else:
-                page.keyboard.press("Enter")
+            sys.exit(1)
 
-            page.wait_for_timeout(8000)
+        log(
+            "密码已经填写。"
+        )
 
-    except Exception as e:
+        click_continue(page)
 
-        log(f"登录页面处理异常：{e}")
+    else:
 
-    log(f"登录后页面：{page.url}")
+        # 有可能 SAP 登录页面同时显示用户名和密码
+        log(
+            "没有找到密码输入框。"
+        )
 
-    # 给 SAP 登录/跳转一些时间
-    page.wait_for_timeout(5000)
+    # --------------------------------------------------------
+    # 等待 SAP 完成登录
+    # --------------------------------------------------------
+
+    log(
+        "等待 SAP 完成登录..."
+    )
+
+    for i in range(30):
+
+        page.wait_for_timeout(2000)
+
+        current_url = page.url
+
+        log(
+            f"登录等待 {i + 1}/30：{current_url}"
+        )
+
+        # 回到了 BAS
+        if (
+            "applicationstudio.cloud.sap"
+            in current_url
+            and "accounts.sap.com"
+            not in current_url
+        ):
+
+            log(
+                "SAP 登录成功。"
+            )
+
+            return True
+
+        # 登录过程中可能出现 MFA
+        if (
+            "accounts.sap.com"
+            in current_url
+        ):
+
+            password = find_password_input(
+                page
+            )
+
+            if password:
+
+                try:
+
+                    if password.input_value() == "":
+                        password.fill(
+                            BAS_PASSWORD
+                        )
+
+                        click_continue(
+                            page
+                        )
+
+                except Exception:
+                    pass
+
+    # --------------------------------------------------------
+    # 登录失败
+    # --------------------------------------------------------
+
+    log(
+        "=========================================="
+    )
+
+    log(
+        "SAP 登录没有完成！"
+    )
+
+    log(
+        f"最终页面：{page.url}"
+    )
+
+    log(
+        "请检查 GitHub Actions 的截图。"
+    )
+
+    try:
+
+        page.screenshot(
+            path="sap_login_failed.png",
+            full_page=True
+        )
+
+        log(
+            "已保存 sap_login_failed.png"
+        )
+
+    except Exception:
+        pass
+
+    return False
 
 
 # ============================================================
@@ -138,7 +445,9 @@ def login(page):
 
 def get_jwt(context):
 
-    log("获取 SAP BAS JWT...")
+    log(
+        "获取 SAP BAS JWT..."
+    )
 
     response = context.request.get(
         BAS_URL + "/jwt",
@@ -152,18 +461,35 @@ def get_jwt(context):
     if response.status != 200:
 
         log(
-            "无法获取 JWT。"
+            "JWT 获取失败。"
         )
 
-        log(
-            response.text()[:1000]
-        )
+        try:
+
+            log(
+                response.text()[:3000]
+            )
+
+        except Exception:
+            pass
 
         return None
 
-    data = response.json()
+    # SAP BAS /jwt 通常直接返回 JSON
+    try:
 
-    # SAP 返回通常是 {"value":"..."}
+        data = response.json()
+
+    except Exception:
+
+        text = response.text().strip()
+
+        if text:
+
+            return text
+
+        return None
+
     if isinstance(data, dict):
 
         jwt = data.get("value")
@@ -171,18 +497,31 @@ def get_jwt(context):
         if jwt:
             return jwt
 
-    # 某些情况下可能直接返回字符串
+        jwt = data.get("token")
+
+        if jwt:
+            return jwt
+
     if isinstance(data, str):
+
         return data
 
-    log("JWT 返回格式无法识别：")
-    log(json.dumps(data, indent=2)[:2000])
+    log(
+        "JWT 返回格式无法识别："
+    )
+
+    log(
+        json.dumps(
+            data,
+            indent=2
+        )[:3000]
+    )
 
     return None
 
 
 # ============================================================
-# 查询 Dev Space
+# 查询 Workspace
 # ============================================================
 
 def get_workspace(context, jwt):
@@ -190,10 +529,11 @@ def get_workspace(context, jwt):
     url = (
         BAS_URL
         + "/ws-manager/api/v1/workspace"
-        + "?all=true"
     )
 
-    log("查询 Dev Space 状态...")
+    log(
+        "查询 Dev Space..."
+    )
 
     response = context.request.get(
         url,
@@ -205,21 +545,31 @@ def get_workspace(context, jwt):
     )
 
     log(
-        f"Workspace API HTTP 状态码：{response.status}"
+        f"Workspace API 状态码：{response.status}"
     )
 
     if response.status != 200:
 
         log(
-            response.text()[:2000]
+            response.text()[:3000]
         )
 
         return None
 
-    data = response.json()
+    try:
+
+        data = response.json()
+
+    except Exception:
+
+        log(
+            "Workspace API 返回不是 JSON。"
+        )
+
+        return None
 
     # --------------------------------------------------------
-    # API 返回列表
+    # 处理不同 API 返回格式
     # --------------------------------------------------------
 
     workspaces = data
@@ -236,11 +586,17 @@ def get_workspace(context, jwt):
             if key in data:
 
                 workspaces = data[key]
+
                 break
 
-    if not isinstance(workspaces, list):
+    if not isinstance(
+        workspaces,
+        list
+    ):
 
-        log("无法识别 Workspace API 返回结构。")
+        log(
+            "无法识别 Workspace 返回结构："
+        )
 
         log(
             json.dumps(
@@ -252,44 +608,43 @@ def get_workspace(context, jwt):
         return None
 
     # --------------------------------------------------------
-    # 查找 yesdo
+    # 找 yesdo
     # --------------------------------------------------------
 
     for workspace in workspaces:
 
-        try:
+        labels = workspace.get(
+            "labels",
+            {}
+        )
 
-            labels = workspace.get(
-                "labels",
-                {}
+        config = workspace.get(
+            "config",
+            {}
+        )
+
+        name = (
+            labels.get("displayname")
+            or labels.get("displayName")
+            or workspace.get("displayname")
+            or workspace.get("name")
+        )
+
+        workspace_id = (
+            config.get("id")
+            or workspace.get("id")
+        )
+
+        if (
+            name == DEVSPACE_NAME
+            or workspace_id == DEVSPACE_ID
+        ):
+
+            log(
+                f"找到 Dev Space：{name}"
             )
 
-            config = workspace.get(
-                "config",
-                {}
-            )
-
-            display_name = (
-                labels.get("displayname")
-                or labels.get("displayName")
-                or workspace.get("displayname")
-                or workspace.get("name")
-            )
-
-            workspace_id = (
-                config.get("id")
-                or workspace.get("id")
-            )
-
-            if (
-                display_name == DEVSPACE_NAME
-                or workspace_id == DEVSPACE_ID
-            ):
-
-                return workspace
-
-        except Exception:
-            continue
+            return workspace
 
     log(
         f"没有找到 Dev Space：{DEVSPACE_NAME}"
@@ -299,7 +654,7 @@ def get_workspace(context, jwt):
 
 
 # ============================================================
-# 提取状态
+# 获取状态
 # ============================================================
 
 def get_status(workspace):
@@ -307,7 +662,6 @@ def get_status(workspace):
     if not workspace:
         return "UNKNOWN"
 
-    # 尝试不同字段
     for key in [
         "status",
         "state",
@@ -319,7 +673,6 @@ def get_status(workspace):
         if value:
             return str(value).upper()
 
-    # 有些返回结构可能把状态放在 config
     config = workspace.get(
         "config",
         {}
@@ -378,8 +731,13 @@ def start_workspace(
         + "?all=false"
     )
 
-    log("准备启动 Dev Space...")
-    log(f"Workspace ID：{workspace_id}")
+    log(
+        "发送 Dev Space 启动请求..."
+    )
+
+    log(
+        f"Workspace ID：{workspace_id}"
+    )
 
     payload = {
         "suspended": False,
@@ -399,13 +757,17 @@ def start_workspace(
     )
 
     log(
-        f"启动 API HTTP 状态码：{response.status}"
+        f"启动 API 状态码：{response.status}"
     )
 
-    if response.status not in [200, 201, 202]:
+    if response.status not in [
+        200,
+        201,
+        202
+    ]:
 
         log(
-            "启动 Dev Space 失败："
+            "启动失败："
         )
 
         log(
@@ -414,7 +776,9 @@ def start_workspace(
 
         return False
 
-    log("启动请求已经发送。")
+    log(
+        "启动请求已发送。"
+    )
 
     return True
 
@@ -426,10 +790,12 @@ def start_workspace(
 def wait_until_running(
     context,
     jwt,
-    timeout_seconds=300
+    timeout_seconds=360
 ):
 
-    log("等待 Dev Space 进入 RUNNING...")
+    log(
+        "等待 Dev Space 启动..."
+    )
 
     start_time = time.time()
 
@@ -446,6 +812,7 @@ def wait_until_running(
         if not workspace:
 
             time.sleep(10)
+
             continue
 
         status = get_status(
@@ -453,7 +820,7 @@ def wait_until_running(
         )
 
         log(
-            f"当前 Dev Space 状态：{status}"
+            f"当前状态：{status}"
         )
 
         if status in [
@@ -462,7 +829,7 @@ def wait_until_running(
         ]:
 
             log(
-                "Dev Space 已经 RUNNING！"
+                "Dev Space 已进入 RUNNING！"
             )
 
             return workspace
@@ -488,15 +855,13 @@ def wait_until_running(
 
 
 # ============================================================
-# 打开 Workspace
+# 访问 Workspace
 # ============================================================
 
 def open_workspace(
     page,
     workspace
 ):
-
-    log("准备访问 Workspace...")
 
     workspace_id = (
         workspace
@@ -505,7 +870,6 @@ def open_workspace(
         or DEVSPACE_ID
     )
 
-    # BAS Workspace URL
     workspace_url = (
         BAS_URL
         + "/?workspace="
@@ -513,7 +877,7 @@ def open_workspace(
     )
 
     log(
-        f"Workspace URL：{workspace_url}"
+        f"访问 Workspace：{workspace_url}"
     )
 
     try:
@@ -524,20 +888,23 @@ def open_workspace(
             timeout=120000
         )
 
-        page.wait_for_timeout(10000)
-
-        log(
-            f"Workspace 页面：{page.url}"
+        page.wait_for_timeout(
+            10000
         )
 
-        # 再访问一次当前页面
-        # 产生实际 HTTP 活动
+        log(
+            f"Workspace 当前页面：{page.url}"
+        )
+
+        # 再刷新一次
         page.reload(
             wait_until="domcontentloaded",
             timeout=120000
         )
 
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(
+            5000
+        )
 
         log(
             "Workspace 活动完成。"
@@ -548,7 +915,7 @@ def open_workspace(
     except Exception as e:
 
         log(
-            f"Workspace 访问异常：{e}"
+            f"访问 Workspace 失败：{e}"
         )
 
         return False
@@ -560,16 +927,24 @@ def open_workspace(
 
 def main():
 
-    log("==========================================")
-    log(" SAP BAS Dev Space Keep Alive")
-    log("==========================================")
+    log(
+        "=========================================="
+    )
+
+    log(
+        " SAP BAS Dev Space Keep Alive"
+    )
+
+    log(
+        "=========================================="
+    )
 
     check_environment()
 
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
-            headless=HEADLESS
+            headless=True
         )
 
         context = browser.new_context(
@@ -587,18 +962,30 @@ def main():
             # 1. 登录
             # ------------------------------------------------
 
-            login(page)
+            login_ok = login(
+                page
+            )
+
+            if not login_ok:
+
+                log(
+                    "登录失败，停止后续操作。"
+                )
+
+                sys.exit(1)
 
             # ------------------------------------------------
-            # 2. 获取 JWT
+            # 2. JWT
             # ------------------------------------------------
 
-            jwt = get_jwt(context)
+            jwt = get_jwt(
+                context
+            )
 
             if not jwt:
 
                 log(
-                    "获取 JWT 失败，任务结束。"
+                    "JWT 获取失败。"
                 )
 
                 sys.exit(1)
@@ -621,7 +1008,7 @@ def main():
                 sys.exit(1)
 
             # ------------------------------------------------
-            # 4. 检查状态
+            # 4. 获取状态
             # ------------------------------------------------
 
             status = get_status(
@@ -629,11 +1016,11 @@ def main():
             )
 
             log(
-                f"Dev Space {DEVSPACE_NAME} 当前状态：{status}"
+                f"{DEVSPACE_NAME} 当前状态：{status}"
             )
 
             # ------------------------------------------------
-            # 5. STOPPED → 启动
+            # 5. STOPPED
             # ------------------------------------------------
 
             if status in [
@@ -663,7 +1050,7 @@ def main():
                     sys.exit(1)
 
             # ------------------------------------------------
-            # 6. STARTING → 等待
+            # 6. STARTING
             # ------------------------------------------------
 
             elif status in [
@@ -672,7 +1059,7 @@ def main():
             ]:
 
                 log(
-                    "Dev Space 正在启动，继续等待..."
+                    "Dev Space 正在启动。"
                 )
 
                 workspace = wait_until_running(
@@ -694,17 +1081,17 @@ def main():
             ]:
 
                 log(
-                    "Dev Space 已经处于 RUNNING。"
+                    "Dev Space 已经 RUNNING。"
                 )
 
             else:
 
                 log(
-                    f"检测到未知状态：{status}"
+                    f"未知状态：{status}"
                 )
 
             # ------------------------------------------------
-            # 8. 再次确认
+            # 8. 最终确认
             # ------------------------------------------------
 
             workspace = get_workspace(
@@ -712,61 +1099,61 @@ def main():
                 jwt
             )
 
-            if workspace:
-
-                final_status = get_status(
-                    workspace
-                )
-
-                log(
-                    f"最终状态：{final_status}"
-                )
-
-                if final_status in [
-                    "RUNNING",
-                    "STARTED"
-                ]:
-
-                    # ----------------------------------------
-                    # 9. 打开 Workspace
-                    # ----------------------------------------
-
-                    open_workspace(
-                        page,
-                        workspace
-                    )
-
-                    log(
-                        "=========================================="
-                    )
-
-                    log(
-                        " Keep Alive 执行成功"
-                    )
-
-                    log(
-                        " Dev Space：RUNNING"
-                    )
-
-                    log(
-                        " Workspace：已访问"
-                    )
-
-                    log(
-                        "=========================================="
-                    )
-
-                else:
-
-                    log(
-                        "最终状态不是 RUNNING。"
-                    )
-
-                    sys.exit(1)
-
-            else:
+            if not workspace:
 
                 sys.exit(1)
+
+            final_status = get_status(
+                workspace
+            )
+
+            log(
+                f"最终状态：{final_status}"
+            )
+
+            if final_status not in [
+                "RUNNING",
+                "STARTED"
+            ]:
+
+                log(
+                    "Dev Space 最终没有处于 RUNNING。"
+                )
+
+                sys.exit(1)
+
+            # ------------------------------------------------
+            # 9. 访问 Workspace
+            # ------------------------------------------------
+
+            open_workspace(
+                page,
+                workspace
+            )
+
+            log(
+                "=========================================="
+            )
+
+            log(
+                " Keep Alive 执行成功"
+            )
+
+            log(
+                f" Dev Space：{DEVSPACE_NAME}"
+            )
+
+            log(
+                " 状态：RUNNING"
+            )
+
+            log(
+                " Workspace：已访问"
+            )
+
+            log(
+                "=========================================="
+            )
 
         except Exception as e:
 
