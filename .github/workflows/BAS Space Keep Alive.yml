@@ -1,21 +1,26 @@
-name: SAP BAS Dev Space Keep Alive
+name: SAP BAS Keep Alive
 
 on:
   workflow_dispatch:
 
   schedule:
-    # 每 20 分钟运行一次
-    - cron: "*/20 * * * *"
+    # 每10分钟运行一次
+    - cron: "*/10 * * * *"
 
 permissions:
   contents: read
 
+concurrency:
+  group: sap-bas-keepalive
+  cancel-in-progress: true
+
 jobs:
+
   keep-alive:
 
     runs-on: ubuntu-latest
 
-    timeout-minutes: 10
+    timeout-minutes: 8
 
     steps:
 
@@ -27,27 +32,36 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Playwright
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install playwright
+          pip install requests playwright
           playwright install --with-deps chromium
 
-      - name: Start SAP BAS Dev Space
+      - name: Keep SAP BAS Dev Space Alive
         env:
+
           BAS_URL: ${{ secrets.BAS_URL }}
+
           BAS_USERNAME: ${{ secrets.BAS_USERNAME }}
+
           BAS_PASSWORD: ${{ secrets.BAS_PASSWORD }}
+
           BAS_DEVSPACE: ${{ secrets.BAS_DEVSPACE }}
-          BAS_PROFILE: ${{ secrets.BAS_PROFILE }}
+
+          BAS_DEVSPACE_ID: ${{ secrets.BAS_DEVSPACE_ID }}
 
         run: |
           python keep_alive.py
 
       - name: Upload error screenshot
         if: failure()
+
         uses: actions/upload-artifact@v4
+
         with:
           name: bas-error-screenshot
+
           path: bas_error.png
+
           if-no-files-found: ignore
