@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
 
   schedule:
-    # 每10分钟运行一次
     - cron: "*/10 * * * *"
 
 permissions:
@@ -20,7 +19,7 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    timeout-minutes: 8
+    timeout-minutes: 10
 
     steps:
 
@@ -38,30 +37,27 @@ jobs:
           pip install requests playwright
           playwright install --with-deps chromium
 
-      - name: Keep SAP BAS Dev Space Alive
+      - name: Start / Keep SAP BAS Dev Space
         env:
-
           BAS_URL: ${{ secrets.BAS_URL }}
-
           BAS_USERNAME: ${{ secrets.BAS_USERNAME }}
-
           BAS_PASSWORD: ${{ secrets.BAS_PASSWORD }}
-
           BAS_DEVSPACE: ${{ secrets.BAS_DEVSPACE }}
-
           BAS_DEVSPACE_ID: ${{ secrets.BAS_DEVSPACE_ID }}
 
         run: |
           python keep_alive.py
 
-      - name: Upload error screenshot
+      - name: Upload screenshots if failed
         if: failure()
 
         uses: actions/upload-artifact@v4
 
         with:
-          name: bas-error-screenshot
+          name: bas-debug-screenshots
 
-          path: bas_error.png
+          path: |
+            bas_error.png
+            sap_login_failed.png
 
           if-no-files-found: ignore
