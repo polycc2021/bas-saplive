@@ -16,7 +16,7 @@ TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 SMTP_SERVER = os.environ.get("SMTP_SERVER")
 SMTP_PORT = os.environ.get("SMTP_PORT", "465")
 SMTP_USER = os.environ.get("SMTP_USER")
-SMTP_PASS = os.environ.get("SAP_EMAIL")
+SMTP_PASS = os.environ.get("SMTP_PASS")
 TO_EMAIL = os.environ.get("TO_EMAIL")
 
 def notify(subject: str, message: str):
@@ -65,7 +65,7 @@ def run():
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 720}
+            viewport={"width": 1440, "height": 900}
         )
         page = context.new_page()
 
@@ -91,48 +91,48 @@ def run():
                 submit_btn = page.locator("#logOnFormSubmit, button[type='submit'], button:has-text('Log On')").first
                 submit_btn.click()
                 
-                print("已提交登录信息，等待重定向...")
-                page.wait_for_load_state("networkidle", timeout=60000)
+                print("已提交登录信息，等待页面重定向...")
+                page.wait_for_timeout(10000)
 
-            print("✅ 登录成功，等待 Dev Space 列表界面加载...")
+            print("✅ 登录成功，等待 Dev Space 列表渲染...")
             
-            # 强力等待：等待页面出现 'Dev Spaces' 或表格元素（最多等 40 秒）
-            try:
-                page.wait_for_selector("text=Dev Space, text=Create Dev Space, table, .fd-table", timeout=40000)
-            except Exception:
-                print("⚠️ 警告：等待 Dev Space 列表渲染超时，尝试强行寻找 Start 按钮...")
+            # 兼容 UI5 框架的加载过程
+            page.wait_for_timeout(15000)
 
-            page.wait_for_timeout(5000) # 额外缓冲 5 秒
-
-            # 扩展 Start 按钮的定位范围（覆盖图标、文本、属性等）
-            start_btn = page.locator(
-                "button[aria-label*='Start'], button[title*='Start'], "
-                "button:has-text('Start'), span[aria-label*='Start'], "
-                "[data-aria-label*='Start'], button.fd-button--emphasized"
+            # 通配定位：精准搜寻带 Start 属性或三角 Play 图标的 UI5 组件/按钮
+            start_locator = page.locator(
+                "[title*='Start'], [aria-label*='Start'], "
+                "ui5-button[icon*='play'], ui5-icon[name*='play'], "
+                "*[data-aria-label*='Start']"
             )
 
-            # 检查是否有 Stop / RUNNING 状态的标志
-            is_running = page.locator("text=RUNNING, button[aria-label*='Stop'], button[title*='Stop']").count() > 0
+            # 校验是否已在 RUNNING 状态
+            is_running = page.locator("text=RUNNING, [title*='Stop'], [aria-label*='Stop']").count() > 0
 
-            if start_btn.count() > 0 and start_btn.first.is_visible():
-                print("⚡ 检测到 Dev Space 处于 STOPPED 状态，点击 Start 开启...")
-                start_btn.first.click()
-                print("已点击 Start，等待 15 秒让开机进程启动...")
+            if start_locator.count() > 0 and start_locator.first.is_visible():
+                print("▶️ 精准找到启动按钮/大三角图标，正在点击开启 Dev Space...")
+                start_locator.first.click()
+                print("已成功点击！等待 15 秒确认启动...")
                 page.wait_for_timeout(15000)
-                print("🎉 已成功发送启动指令！")
+                print("🎉 保活与开机指令已成功提交！")
             elif is_running:
-                print("✅ 检测到 Dev Space 已经处于 RUNNING (运行中) 状态，无需点击开机。")
+                print("✅ 检测到 Dev Space 已经处于 RUNNING 状态，无需点击开机。")
                 page.wait_for_timeout(5000)
             else:
-                # 既没有 Running，也没有找到 Start 按钮，说明页面加载异常或被弹窗遮挡
-                raise Exception("未找到 Start 按钮，且未检测到 RUNNING 状态！可能网页渲染未完成或停留在未知界面。")
+                # 备用方案：尝试直接按 title 属性点击
+                try:
+                    print("⚠️ 尝试使用备用方法点击 Start 图标...")
+                    page.get_by_title("Start", exact=False).first.click()
+                    print("🎉 备用点击成功！")
+                except Exception:
+                    raise Exception("无法定位到三角启动图标 (Start)，请检查 failure.png 截图确定页面状态。")
 
         except Exception as e:
             err_body = f"保活过程异常:\n{str(e)}"
             print(f"❌ {err_body}")
             page.screenshot(path="failure.png")
             notify("❌ SAP BAS 保活脚本未成功开启 Dev Space", err_body)
-            sys.exit(1) # 抛出异常，让 GitHub Actions 显示红色 ✗，触发报错提醒
+            sys.exit(1)
         finally:
             browser.close()
 
