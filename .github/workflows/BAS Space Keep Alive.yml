@@ -1,0 +1,47 @@
+name: BAS Space Keep Alive
+
+on:
+  schedule:
+    # 公开库额度无限，每 20 分钟运行一次
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 配置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: 安装 Playwright 浏览器
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        playwright install chromium --with-deps
+
+    - name: 执行保活脚本
+      env:
+        BAS_URL: ${{ secrets.BAS_URL }}
+        SAP_STORAGE_STATE: ${{ secrets.SAP_STORAGE_STATE }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        SMTP_USER: ${{ secrets.SMTP_USER }}
+        SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        TO_EMAIL: ${{ secrets.TO_EMAIL }}
+      run: python keep_alive.py
+
+    - name: 出错时保存截图
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: failure-screenshot
+        path: failure.png
