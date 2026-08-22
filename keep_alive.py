@@ -12,7 +12,7 @@ from playwright.sync_api import sync_playwright
 
 BAS_URL = os.getenv(
     "BAS_URL",
-    "https://9a18409etrial.us10cf.trial.applicationstudio.cloud.sap"
+    "https://9a18409etrial.us10.cf.trial.applicationstudio.cloud.sap"
 ).rstrip("/")
 
 BAS_USERNAME = os.getenv("BAS_USERNAME")
@@ -38,7 +38,7 @@ def log(message):
 
 
 # ============================================================
-# 检查环境变量
+# 环境检查
 # ============================================================
 
 def check_environment():
@@ -68,20 +68,72 @@ def check_environment():
 
 
 # ============================================================
-# 找用户名输入框
+# 通用安全点击
+# ============================================================
+
+def safe_click(locator, description="元素"):
+
+    try:
+
+        if locator.count() == 0:
+            return False
+
+        element = locator.first
+
+        if not element.is_visible(timeout=1500):
+            return False
+
+        log(f"找到 {description}。")
+
+        try:
+
+            element.click(
+                timeout=5000
+            )
+
+        except Exception:
+
+            # 如果普通 click 失败，尝试 force
+            element.click(
+                force=True,
+                timeout=5000
+            )
+
+        return True
+
+    except Exception as e:
+
+        log(
+            f"点击 {description} 失败：{e}"
+        )
+
+        return False
+
+
+# ============================================================
+# 找用户名
 # ============================================================
 
 def find_username_input(page):
 
     selectors = [
+
         'input[type="email"]',
+
         'input[name="email"]',
+
         'input[name="username"]',
+
         'input[autocomplete="username"]',
+
         'input[placeholder*="Email"]',
+
         'input[placeholder*="email"]',
+
         'input[placeholder*="User"]',
+
         'input[placeholder*="user"]'
+
     ]
 
     for selector in selectors:
@@ -105,15 +157,19 @@ def find_username_input(page):
 
 
 # ============================================================
-# 找密码输入框
+# 找密码
 # ============================================================
 
 def find_password_input(page):
 
     selectors = [
+
         'input[type="password"]',
+
         'input[name="password"]',
+
         'input[autocomplete="current-password"]'
+
     ]
 
     for selector in selectors:
@@ -137,18 +193,25 @@ def find_password_input(page):
 
 
 # ============================================================
-# 点击 Continue / Sign In
+# 点击登录按钮
 # ============================================================
 
 def click_continue(page):
 
     selectors = [
+
         'button:has-text("Continue")',
+
         'button:has-text("Sign In")',
+
         'button:has-text("Sign in")',
+
         'button:has-text("Log On")',
+
         'button[type="submit"]',
+
         'input[type="submit"]'
+
     ]
 
     for selector in selectors:
@@ -170,15 +233,7 @@ def click_continue(page):
         except Exception:
             pass
 
-    try:
-
-        page.keyboard.press("Enter")
-
-        return True
-
-    except Exception:
-
-        return False
+    return False
 
 
 # ============================================================
@@ -264,7 +319,7 @@ def login(page):
         )
 
     # --------------------------------------------------------
-    # 等待登录完成
+    # 等待登录
     # --------------------------------------------------------
 
     log(
@@ -301,15 +356,10 @@ def login(page):
         "SAP 登录失败。"
     )
 
-    try:
-
-        page.screenshot(
-            path="sap_login_failed.png",
-            full_page=True
-        )
-
-    except Exception:
-        pass
+    save_screenshot(
+        page,
+        "sap_login_failed.png"
+    )
 
     return False
 
@@ -431,10 +481,6 @@ def get_workspace(context, jwt):
     log(
         f"API 返回 Workspace 数量：{len(data)}"
     )
-
-    # ========================================================
-    # 查找目标 Dev Space
-    # ========================================================
 
     for workspace in data:
 
@@ -627,22 +673,34 @@ def start_workspace(
     )
 
     payload = {
+
         "suspended": False,
-        "WorkspaceDisplayName": display_name
+
+        "WorkspaceDisplayName":
+            display_name
+
     }
 
     response = context.request.put(
+
         url,
+
         headers={
+
             "X-Approuter-Authorization":
                 f"Bearer {jwt}",
+
             "Content-Type":
                 "application/json"
+
         },
+
         data=json.dumps(
             payload
         ),
+
         timeout=60000
+
     )
 
     log(
@@ -673,7 +731,7 @@ def start_workspace(
 
 
 # ============================================================
-# 等待 Dev Space RUNNING
+# 等待 RUNNING
 # ============================================================
 
 def wait_until_running(
@@ -744,91 +802,680 @@ def wait_until_running(
 
 
 # ============================================================
-# 通过 Theia 菜单打开 Terminal
+# 保存截图
 # ============================================================
 
-def click_menu_item_by_text(page, text):
-
-    log(
-        f"尝试通过页面菜单寻找：{text}"
-    )
+def save_screenshot(page, filename):
 
     try:
 
-        result = page.evaluate(
-            """
-            (targetText) => {
-
-                function findAndClick(root) {
-
-                    if (!root) {
-                        return false;
-                    }
-
-                    const elements =
-                        root.querySelectorAll("*");
-
-                    for (const el of elements) {
-
-                        const text =
-                            (el.innerText || "")
-                            .trim();
-
-                        const aria =
-                            (el.getAttribute("aria-label") || "")
-                            .trim();
-
-                        const title =
-                            (el.getAttribute("title") || "")
-                            .trim();
-
-                        if (
-                            text === targetText ||
-                            aria === targetText ||
-                            title === targetText
-                        ) {
-
-                            const rect =
-                                el.getBoundingClientRect();
-
-                            if (
-                                rect.width > 0 &&
-                                rect.height > 0
-                            ) {
-
-                                el.click();
-
-                                return true;
-                            }
-                        }
-
-                        if (
-                            el.shadowRoot &&
-                            findAndClick(el.shadowRoot)
-                        ) {
-
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                return findAndClick(document);
-            }
-            """,
-            text
+        page.screenshot(
+            path=filename,
+            full_page=True
         )
 
-        return bool(result)
+        log(
+            f"已保存截图：{filename}"
+        )
 
     except Exception as e:
 
         log(
-            f"寻找菜单 {text} 时发生异常：{e}"
+            f"保存截图失败：{e}"
+        )
+
+
+# ============================================================
+# 检查 Theia 是否加载完成
+# ============================================================
+
+def wait_for_theia(page):
+
+    log(
+        "等待 Theia IDE 加载..."
+    )
+
+    for i in range(30):
+
+        page.wait_for_timeout(
+            1000
+        )
+
+        try:
+
+            body = page.locator(
+                "body"
+            )
+
+            if body.is_visible(
+                timeout=1000
+            ):
+
+                text = body.inner_text(
+                    timeout=1000
+                )
+
+                if (
+                    "File" in text
+                    or
+                    "Terminal" in text
+                    or
+                    "View" in text
+                    or
+                    "Help" in text
+                ):
+
+                    log(
+                        f"Theia IDE 页面已加载，等待 {i + 1} 秒。"
+                    )
+
+                    return True
+
+        except Exception:
+            pass
+
+    log(
+        "Theia IDE 加载检测超时，继续尝试。"
+    )
+
+    return True
+
+
+# ============================================================
+# 通过 ARIA role 查找菜单
+# ============================================================
+
+def click_menu_role(page, name):
+
+    log(
+        f"尝试通过 ARIA 菜单寻找：{name}"
+    )
+
+    selectors = [
+
+        f'[role="menuitem"][aria-label="{name}"]',
+
+        f'[role="menuitem"][title="{name}"]',
+
+        f'[role="menuitem"]:has-text("{name}")',
+
+        f'[role="button"][aria-label="{name}"]',
+
+        f'[role="button"][title="{name}"]'
+
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            )
+
+            if locator.count() == 0:
+                continue
+
+            if safe_click(
+                locator,
+                f"菜单 {name}"
+            ):
+
+                return True
+
+        except Exception:
+            pass
+
+    return False
+
+
+# ============================================================
+# 打开 Terminal 菜单
+# ============================================================
+
+def open_terminal_from_menu(page):
+
+    log(
+        "尝试通过 Theia 标准菜单打开 Terminal..."
+    )
+
+    # --------------------------------------------------------
+    # 方法 1：直接找 Terminal menuitem
+    # --------------------------------------------------------
+
+    if click_menu_role(
+        page,
+        "Terminal"
+    ):
+
+        page.wait_for_timeout(
+            1000
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # 方法 2：找顶部菜单中的 Terminal
+    # --------------------------------------------------------
+
+    candidates = [
+
+        page.get_by_text(
+            "Terminal",
+            exact=True
+        ),
+
+        page.locator(
+            '[aria-label="Terminal"]'
+        ),
+
+        page.locator(
+            '[title="Terminal"]'
+        ),
+
+        page.locator(
+            '[data-command="terminal"]'
+        )
+
+    ]
+
+    for locator in candidates:
+
+        try:
+
+            if safe_click(
+                locator,
+                "Terminal 菜单"
+            ):
+
+                page.wait_for_timeout(
+                    1000
+                )
+
+                return True
+
+        except Exception:
+            pass
+
+    return False
+
+
+# ============================================================
+# 点击 New Terminal
+# ============================================================
+
+def click_new_terminal(page):
+
+    log(
+        "寻找 New Terminal..."
+    )
+
+    names = [
+
+        "New Terminal",
+
+        "New Terminal...",
+
+        "New Terminal (Ctrl+Shift+`)",
+
+        "New Terminal (⌃⇧`)",
+
+        "Create New Terminal"
+
+    ]
+
+    for name in names:
+
+        try:
+
+            locator = page.get_by_text(
+                name,
+                exact=True
+            )
+
+            if safe_click(
+                locator,
+                name
+            ):
+
+                return True
+
+        except Exception:
+            pass
+
+        try:
+
+            locator = page.locator(
+                f'[aria-label="{name}"]'
+            )
+
+            if safe_click(
+                locator,
+                name
+            ):
+
+                return True
+
+        except Exception:
+            pass
+
+    return False
+
+
+# ============================================================
+# Command Palette
+#
+# 注意：
+# 不使用 F1 / Ctrl+Shift+P 快捷键。
+# 直接通过页面菜单寻找 Command Palette。
+# ============================================================
+
+def open_command_palette(page):
+
+    log(
+        "尝试通过 Theia 菜单打开 Command Palette..."
+    )
+
+    # --------------------------------------------------------
+    # 先寻找 View
+    # --------------------------------------------------------
+
+    view_names = [
+
+        "View",
+
+        "View Menu"
+
+    ]
+
+    view_clicked = False
+
+    for name in view_names:
+
+        try:
+
+            locator = page.get_by_text(
+                name,
+                exact=True
+            )
+
+            if safe_click(
+                locator,
+                name
+            ):
+
+                view_clicked = True
+
+                page.wait_for_timeout(
+                    500
+                )
+
+                break
+
+        except Exception:
+            pass
+
+    if not view_clicked:
+
+        for name in view_names:
+
+            try:
+
+                locator = page.locator(
+                    f'[aria-label="{name}"]'
+                )
+
+                if safe_click(
+                    locator,
+                    name
+                ):
+
+                    view_clicked = True
+
+                    page.wait_for_timeout(
+                        500
+                    )
+
+                    break
+
+            except Exception:
+                pass
+
+    if not view_clicked:
+
+        log(
+            "没有找到 View 菜单。"
         )
 
         return False
+
+    # --------------------------------------------------------
+    # 找 Command Palette
+    # --------------------------------------------------------
+
+    command_names = [
+
+        "Command Palette...",
+
+        "Command Palette",
+
+        "View: Command Palette"
+
+    ]
+
+    for name in command_names:
+
+        try:
+
+            locator = page.get_by_text(
+                name,
+                exact=True
+            )
+
+            if safe_click(
+                locator,
+                name
+            ):
+
+                page.wait_for_timeout(
+                    1000
+                )
+
+                return True
+
+        except Exception:
+            pass
+
+        try:
+
+            locator = page.locator(
+                f'[aria-label="{name}"]'
+            )
+
+            if safe_click(
+                locator,
+                name
+            ):
+
+                page.wait_for_timeout(
+                    1000
+                )
+
+                return True
+
+        except Exception:
+            pass
+
+    log(
+        "没有找到 Command Palette。"
+    )
+
+    return False
+
+
+# ============================================================
+# 通过 Command Palette 找 Terminal
+# ============================================================
+
+def terminal_from_command_palette(page):
+
+    if not open_command_palette(page):
+
+        return False
+
+    log(
+        "Command Palette 已打开。"
+    )
+
+    # --------------------------------------------------------
+    # 查找 Command Palette 输入框
+    # --------------------------------------------------------
+
+    selectors = [
+
+        'input[placeholder*="command" i]',
+
+        'input[placeholder*="type" i]',
+
+        '.quick-input-widget input',
+
+        '.quick-input-box input',
+
+        '[role="dialog"] input',
+
+        '[role="combobox"]'
+
+    ]
+
+    input_box = None
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            ).first
+
+            if locator.is_visible(
+                timeout=1000
+            ):
+
+                input_box = locator
+
+                break
+
+        except Exception:
+            pass
+
+    if not input_box:
+
+        log(
+            "Command Palette 输入框没有找到。"
+        )
+
+        save_screenshot(
+            page,
+            "command_palette_failed.png"
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # 输入 Terminal 搜索
+    # --------------------------------------------------------
+
+    try:
+
+        input_box.fill(
+            "Terminal"
+        )
+
+        page.wait_for_timeout(
+            1500
+        )
+
+    except Exception as e:
+
+        log(
+            f"Command Palette 输入失败：{e}"
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # 查找命令
+    # --------------------------------------------------------
+
+    command_names = [
+
+        "Terminal: Create New Terminal",
+
+        "Create New Terminal",
+
+        "New Terminal",
+
+        "Terminal: Focus on Terminal View",
+
+        "View: Toggle Integrated Terminal"
+
+    ]
+
+    for name in command_names:
+
+        try:
+
+            locator = page.get_by_text(
+                name,
+                exact=True
+            )
+
+            if safe_click(
+                locator,
+                f"命令 {name}"
+            ):
+
+                page.wait_for_timeout(
+                    1500
+                )
+
+                return True
+
+        except Exception:
+            pass
+
+    # --------------------------------------------------------
+    # 如果没有精确匹配，寻找包含 Terminal 的命令
+    # --------------------------------------------------------
+
+    try:
+
+        items = page.locator(
+            '[role="option"]'
+        )
+
+        count = items.count()
+
+        for i in range(
+            min(count, 20)
+        ):
+
+            item = items.nth(i)
+
+            try:
+
+                if not item.is_visible(
+                    timeout=300
+                ):
+                    continue
+
+                text = item.inner_text(
+                    timeout=500
+                ).strip()
+
+                if (
+                    "Terminal" in text
+                    and
+                    (
+                        "New" in text
+                        or
+                        "Create" in text
+                        or
+                        "Toggle" in text
+                    )
+                ):
+
+                    log(
+                        f"找到 Terminal 命令：{text}"
+                    )
+
+                    item.click()
+
+                    page.wait_for_timeout(
+                        1500
+                    )
+
+                    return True
+
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+
+    log(
+        "Command Palette 中没有找到可用 Terminal 命令。"
+    )
+
+    save_screenshot(
+        page,
+        "terminal_command_not_found.png"
+    )
+
+    return False
+
+
+# ============================================================
+# 检测 xterm
+# ============================================================
+
+def detect_terminal(page, timeout=20):
+
+    log(
+        "等待 Terminal 初始化..."
+    )
+
+    start = time.time()
+
+    while (
+        time.time() - start
+        < timeout
+    ):
+
+        page.wait_for_timeout(
+            1000
+        )
+
+        selectors = [
+
+            ".xterm",
+
+            ".xterm-screen",
+
+            ".xterm-viewport",
+
+            ".terminal",
+
+            "[class*='terminal']"
+
+        ]
+
+        for selector in selectors:
+
+            try:
+
+                locator = page.locator(
+                    selector
+                ).first
+
+                if locator.is_visible(
+                    timeout=300
+                ):
+
+                    log(
+                        f"检测到 Terminal：{selector}"
+                    )
+
+                    return True
+
+            except Exception:
+                pass
+
+    log(
+        "Terminal 初始化超时。"
+    )
+
+    return False
 
 
 # ============================================================
@@ -842,160 +1489,135 @@ def open_terminal(page):
     )
 
     log(
-        "开始通过 Theia 菜单打开 Terminal..."
+        "开始打开 BAS Terminal..."
     )
 
     # --------------------------------------------------------
-    # 方法一：点击 Terminal 顶部菜单
+    # 方法 1：标准菜单
     # --------------------------------------------------------
 
-    if not click_menu_item_by_text(
-        page,
-        "Terminal"
-    ):
+    if open_terminal_from_menu(page):
 
         log(
-            "没有找到 Terminal 菜单。"
+            "Terminal 菜单已打开。"
         )
 
-        return False
-
-    log(
-        "Terminal 菜单已点击。"
-    )
-
-    page.wait_for_timeout(
-        1500
-    )
-
-    # --------------------------------------------------------
-    # 点击 New Terminal
-    # --------------------------------------------------------
-
-    new_terminal_names = [
-        "New Terminal",
-        "New Terminal...",
-        "New Terminal (Ctrl+Shift+`)"
-    ]
-
-    clicked = False
-
-    for name in new_terminal_names:
-
-        if click_menu_item_by_text(
-            page,
-            name
-        ):
-
-            clicked = True
+        if click_new_terminal(page):
 
             log(
-                f"已点击：{name}"
+                "New Terminal 已点击。"
             )
 
-            break
-
-    if not clicked:
-
-        log(
-            "没有找到 New Terminal 菜单项。"
-        )
-
-        try:
-
-            page.screenshot(
-                path="terminal_menu_failed.png",
-                full_page=True
-            )
-
-        except Exception:
-            pass
-
-        return False
-
-    # --------------------------------------------------------
-    # 等待 Terminal 初始化
-    # --------------------------------------------------------
-
-    log(
-        "等待 Terminal 初始化..."
-    )
-
-    for i in range(20):
-
-        page.wait_for_timeout(
-            1000
-        )
-
-        try:
-
-            terminal = page.locator(
-                ".xterm"
-            ).first
-
-            if terminal.is_visible(
-                timeout=500
-            ):
-
-                log(
-                    "检测到 xterm Terminal。"
-                )
+            if detect_terminal(page):
 
                 return True
 
-        except Exception:
-            pass
+    # --------------------------------------------------------
+    # 方法 2：Command Palette
+    # --------------------------------------------------------
 
     log(
-        "等待 Terminal 超时。"
+        "标准菜单方式失败。"
+    )
+
+    log(
+        "切换到 Command Palette..."
+    )
+
+    if terminal_from_command_palette(page):
+
+        if detect_terminal(page):
+
+            log(
+                "通过 Command Palette 成功打开 Terminal。"
+            )
+
+            return True
+
+    # --------------------------------------------------------
+    # 最终失败
+    # --------------------------------------------------------
+
+    log(
+        "所有 Terminal 打开方法均失败。"
+    )
+
+    save_screenshot(
+        page,
+        "terminal_open_failed.png"
     )
 
     return False
 
 
 # ============================================================
-# 向 Terminal 输入命令
+# 获取 Terminal 输入框
+# ============================================================
+
+def get_terminal_input(page):
+
+    selectors = [
+
+        ".xterm-helper-textarea",
+
+        ".xterm textarea",
+
+        ".xterm-helper-textarea textarea"
+
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            ).first
+
+            if locator.is_visible(
+                timeout=1000
+            ):
+
+                return locator
+
+        except Exception:
+            pass
+
+    return None
+
+
+# ============================================================
+# 执行 start.sh
 # ============================================================
 
 def run_start_script(page):
 
     log(
+        "=========================================="
+    )
+
+    log(
         "准备执行 start.sh..."
     )
 
+    textarea = get_terminal_input(
+        page
+    )
+
+    if not textarea:
+
+        log(
+            "没有找到 xterm Terminal 输入区域。"
+        )
+
+        save_screenshot(
+            page,
+            "terminal_input_failed.png"
+        )
+
+        return False
+
     try:
-
-        terminal = page.locator(
-            ".xterm"
-        ).first
-
-        if not terminal.is_visible(
-            timeout=5000
-        ):
-
-            log(
-                "没有找到可见 Terminal。"
-            )
-
-            return False
-
-        # ----------------------------------------------------
-        # xterm.js 实际输入区域
-        # ----------------------------------------------------
-
-        textarea = page.locator(
-            ".xterm-helper-textarea"
-        ).first
-
-        if not textarea.is_visible(
-            timeout=5000
-        ):
-
-            log(
-                "没有找到 xterm 输入区域。"
-            )
-
-            return False
 
         textarea.click()
 
@@ -1011,8 +1633,16 @@ def run_start_script(page):
             f"向 Terminal 输入：{command}"
         )
 
-        textarea.fill(
-            command
+        # ----------------------------------------------------
+        # xterm textarea 不建议使用 fill
+        #
+        # xterm.js 的 textarea 是隐藏/特殊输入元素，
+        # 使用 press sequentially 更接近真实键盘输入。
+        # ----------------------------------------------------
+
+        textarea.press_sequentially(
+            command,
+            delay=2
         )
 
         textarea.press(
@@ -1020,15 +1650,19 @@ def run_start_script(page):
         )
 
         log(
-            "start.sh 已执行。"
+            "start.sh 已发送到 Terminal。"
         )
 
         # ----------------------------------------------------
-        # 等待 Xray / Cloudflared 启动
+        # 等待启动
         # ----------------------------------------------------
 
+        log(
+            "等待 Xray + Cloudflared 启动..."
+        )
+
         page.wait_for_timeout(
-            10000
+            12000
         )
 
         return True
@@ -1043,7 +1677,47 @@ def run_start_script(page):
 
 
 # ============================================================
-# 验证节点进程
+# 读取 Terminal 当前内容
+# ============================================================
+
+def get_terminal_text(page):
+
+    selectors = [
+
+        ".xterm-screen",
+
+        ".xterm"
+
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            locator = page.locator(
+                selector
+            ).first
+
+            if locator.is_visible(
+                timeout=1000
+            ):
+
+                text = locator.inner_text(
+                    timeout=2000
+                )
+
+                if text:
+
+                    return text
+
+        except Exception:
+            pass
+
+    return ""
+
+
+# ============================================================
+# 验证节点
 # ============================================================
 
 def verify_node(page):
@@ -1056,11 +1730,19 @@ def verify_node(page):
         "验证节点进程..."
     )
 
-    try:
+    textarea = get_terminal_input(
+        page
+    )
 
-        textarea = page.locator(
-            ".xterm-helper-textarea"
-        ).first
+    if not textarea:
+
+        log(
+            "没有找到 Terminal 输入区域。"
+        )
+
+        return False
+
+    try:
 
         textarea.click()
 
@@ -1068,15 +1750,32 @@ def verify_node(page):
             500
         )
 
-        # 使用命令把结果写入终端
         check_command = (
+
             "echo NODE_CHECK; "
-            "pgrep -af xray || true; "
-            "pgrep -af cloudflared || true"
+
+            "echo CF_TOKEN_CHECK; "
+
+            "if [ -n \"$CF_TUNNEL_TOKEN\" ]; "
+            "then echo CF_TUNNEL_TOKEN_OK; "
+            "else echo CF_TUNNEL_TOKEN_MISSING; "
+            "fi; "
+
+            "echo XRAY_CHECK; "
+
+            "pgrep -af '/home/user/my-node/xray' "
+            "|| true; "
+
+            "echo CLOUDFLARED_CHECK; "
+
+            "pgrep -af '/home/user/my-node/cloudflared' "
+            "|| true"
+
         )
 
-        textarea.fill(
-            check_command
+        textarea.press_sequentially(
+            check_command,
+            delay=1
         )
 
         textarea.press(
@@ -1087,9 +1786,58 @@ def verify_node(page):
             5000
         )
 
-        log(
-            "节点进程检查命令已执行。"
+        text = get_terminal_text(
+            page
         )
+
+        # ----------------------------------------------------
+        # 输出诊断
+        # ----------------------------------------------------
+
+        if text:
+
+            log(
+                "Terminal 最近输出："
+            )
+
+            lines = text.splitlines()
+
+            for line in lines[-30:]:
+
+                if line.strip():
+
+                    log(
+                        "  "
+                        + line
+                    )
+
+        # ----------------------------------------------------
+        # 检查关键结果
+        # ----------------------------------------------------
+
+        if "CF_TUNNEL_TOKEN_MISSING" in text:
+
+            log(
+                "警告：BAS Dev Space 内没有 CF_TUNNEL_TOKEN。"
+            )
+
+            log(
+                "start.sh 可能无法启动 Cloudflared。"
+            )
+
+        if (
+            "NODE_CHECK" in text
+            and
+            (
+                "xray" in text.lower()
+                or
+                "XRAY_CHECK" in text
+            )
+        ):
+
+            log(
+                "节点进程检查命令已经执行。"
+            )
 
         return True
 
@@ -1103,7 +1851,63 @@ def verify_node(page):
 
 
 # ============================================================
-# 打开 Workspace 并启动节点
+# 检查 start.sh 成功标记
+# ============================================================
+
+def check_start_success(page):
+
+    log(
+        "检查 start.sh 执行结果..."
+    )
+
+    page.wait_for_timeout(
+        2000
+    )
+
+    text = get_terminal_text(
+        page
+    )
+
+    if not text:
+
+        log(
+            "无法读取 Terminal 输出。"
+        )
+
+        return False
+
+    if "__BAS_NODE_START_SUCCESS__" in text:
+
+        log(
+            "检测到 __BAS_NODE_START_SUCCESS__"
+        )
+
+        log(
+            "start.sh 执行成功。"
+        )
+
+        return True
+
+    if (
+        "[OK] Xray + Cloudflared are running."
+        in text
+    ):
+
+        log(
+            "检测到 Xray + Cloudflared 正常运行。"
+        )
+
+        return True
+
+    log(
+        "没有检测到 start.sh 成功标记。"
+    )
+
+    return False
+
+
+# ============================================================
+# 打开 Workspace
 # ============================================================
 
 def open_workspace(
@@ -1154,21 +1958,25 @@ def open_workspace(
         # 等待 Theia
         # ----------------------------------------------------
 
+        wait_for_theia(
+            page
+        )
+
         log(
-            "等待 IDE 完整加载 20 秒..."
+            "额外等待 IDE 完整初始化 10 秒..."
         )
 
         page.wait_for_timeout(
-            20000
+            10000
         )
 
         log(
             f"当前 Workspace 页面：{page.url}"
         )
 
-        # ----------------------------------------------------
-        # 第一次尝试打开 Terminal
-        # ----------------------------------------------------
+        # ====================================================
+        # 最多 3 次完整尝试
+        # ====================================================
 
         for attempt in range(1, 4):
 
@@ -1179,6 +1987,10 @@ def open_workspace(
             log(
                 f"节点启动尝试 {attempt}/3"
             )
+
+            # ------------------------------------------------
+            # 打开 Terminal
+            # ------------------------------------------------
 
             terminal_ok = open_terminal(
                 page
@@ -1218,10 +2030,6 @@ def open_workspace(
 
                 if attempt < 3:
 
-                    log(
-                        "等待 5 秒后重试..."
-                    )
-
                     page.wait_for_timeout(
                         5000
                     )
@@ -1229,7 +2037,27 @@ def open_workspace(
                 continue
 
             # ------------------------------------------------
-            # 验证
+            # 等待并检查成功标记
+            # ------------------------------------------------
+
+            if check_start_success(page):
+
+                verify_node(
+                    page
+                )
+
+                log(
+                    "=========================================="
+                )
+
+                log(
+                    "节点启动流程完成。"
+                )
+
+                return True
+
+            # ------------------------------------------------
+            # 即使没有读取到成功标记，也进行进程检查
             # ------------------------------------------------
 
             verify_node(
@@ -1237,36 +2065,37 @@ def open_workspace(
             )
 
             log(
-                "=========================================="
+                "没有读取到明确成功标记。"
             )
 
-            log(
-                "start.sh 已执行。"
-            )
+            if attempt < 3:
 
-            log(
-                "节点启动流程完成。"
-            )
+                log(
+                    "等待 5 秒后再次检查..."
+                )
 
-            return True
+                page.wait_for_timeout(
+                    5000
+                )
+
+                continue
+
+        # ====================================================
+        # 三次失败
+        # ====================================================
 
         log(
             "=========================================="
         )
 
         log(
-            "3 次尝试均未成功打开 Terminal。"
+            "3 次节点启动尝试均未确认成功。"
         )
 
-        try:
-
-            page.screenshot(
-                path="terminal_failed.png",
-                full_page=True
-            )
-
-        except Exception:
-            pass
+        save_screenshot(
+            page,
+            "terminal_failed.png"
+        )
 
         return False
 
@@ -1276,15 +2105,10 @@ def open_workspace(
             f"打开 Workspace 失败：{e}"
         )
 
-        try:
-
-            page.screenshot(
-                path="workspace_error.png",
-                full_page=True
-            )
-
-        except Exception:
-            pass
+        save_screenshot(
+            page,
+            "workspace_error.png"
+        )
 
         return False
 
@@ -1300,7 +2124,7 @@ def main():
     )
 
     log(
-        " SAP BAS Dev Space Keep Alive"
+        " SAP BAS Dev Space Keep Alive V2"
     )
 
     log(
@@ -1328,10 +2152,18 @@ def main():
         )
 
         context = browser.new_context(
+
             viewport={
                 "width": 1366,
                 "height": 768
-            }
+            },
+
+            # ------------------------------------------------
+            # 保持桌面浏览器特征
+            # ------------------------------------------------
+
+            java_script_enabled=True
+
         )
 
         page = context.new_page()
@@ -1371,7 +2203,7 @@ def main():
             )
 
             # =================================================
-            # 获取 Workspace
+            # Workspace
             # =================================================
 
             workspace = get_workspace(
@@ -1392,7 +2224,7 @@ def main():
             )
 
             # =================================================
-            # 如果停止 → 启动
+            # STOPPED → 启动
             # =================================================
 
             if status == "STOPPED":
@@ -1421,7 +2253,7 @@ def main():
                     sys.exit(1)
 
             # =================================================
-            # 如果正在启动
+            # STARTING
             # =================================================
 
             elif status in [
@@ -1443,7 +2275,7 @@ def main():
                     sys.exit(1)
 
             # =================================================
-            # 已经 RUNNING
+            # RUNNING
             # =================================================
 
             elif status in [
@@ -1494,7 +2326,7 @@ def main():
                 sys.exit(1)
 
             # =================================================
-            # 打开 Workspace + Terminal + start.sh
+            # Workspace + Terminal + start.sh
             # =================================================
 
             success = open_workspace(
@@ -1531,7 +2363,7 @@ def main():
             )
 
             log(
-                " Terminal   : 已通过 Theia 菜单打开"
+                " Terminal   : 已打开"
             )
 
             log(
@@ -1540,6 +2372,7 @@ def main():
 
             log(
                 "=========================================="
+
             )
 
         except Exception as e:
@@ -1552,23 +2385,24 @@ def main():
                 str(e)
             )
 
-            try:
-
-                page.screenshot(
-                    path="bas_error.png",
-                    full_page=True
-                )
-
-            except Exception:
-                pass
+            save_screenshot(
+                page,
+                "bas_error.png"
+            )
 
             sys.exit(1)
 
         finally:
 
             context.close()
+
             browser.close()
 
 
+# ============================================================
+# 程序入口
+# ============================================================
+
 if __name__ == "__main__":
+
     main()
