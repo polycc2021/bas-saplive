@@ -777,7 +777,7 @@ def wait_until_running(
 
 
 # ============================================================
-# 打开 Workspace
+# 打开 Workspace（已加入自动点击空间名字触发编辑器/tasks.json）
 # ============================================================
 
 def open_workspace(
@@ -796,32 +796,79 @@ def open_workspace(
         .get("theia")
     )
 
-    # 如果 API 没有提供 URL，则使用 BAS 主页
-    if not workspace_url:
-
-        workspace_url = (
-            BAS_URL
-            + "/index.html"
-        )
-
     log(
         "打开 Dev Space Workspace..."
     )
 
-    log(
-        f"Workspace URL：{workspace_url}"
-    )
-
     try:
 
-        page.goto(
-            workspace_url,
-            wait_until="domcontentloaded",
-            timeout=120000
+        # 确保浏览器处于管理主页
+        if "applicationstudio.cloud.sap" not in page.url:
+            page.goto(
+                BAS_URL + "/index.html",
+                wait_until="domcontentloaded",
+                timeout=120000
+            )
+            page.wait_for_timeout(5000)
+
+        # 1. 自动点击 DEVSPACE_NAME (如 yesdo) 名称进入 IDE 编辑器
+        log(
+            f"正在定位并点击 Dev Space '{DEVSPACE_NAME}' 名称以进入编辑器..."
+        )
+
+        clicked = page.evaluate("""(targetName) => {
+            function clickSpaceName(root) {
+                if (!root) return false;
+                for (let el of root.querySelectorAll('*')) {
+                    const txt = (el.innerText || '').trim();
+                    if (txt === targetName || (el.getAttribute('title') || '').includes(targetName)) {
+                        el.click();
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        return true;
+                    }
+                    if (el.shadowRoot && clickSpaceName(el.shadowRoot)) return true;
+                }
+                return false;
+            }
+            return clickSpaceName(document);
+        }""", DEVSPACE_NAME)
+
+        if clicked:
+
+            log(
+                f"已成功点击 '{DEVSPACE_NAME}'，正跳转至 IDE 界面..."
+            )
+
+        elif workspace_url:
+
+            log(
+                f"未在页面找到可点击组件，使用 API Workspace URL 跳转：{workspace_url}"
+            )
+
+            page.goto(
+                workspace_url,
+                wait_until="domcontentloaded",
+                timeout=120000
+            )
+
+        else:
+
+            log(
+                "尝试按页面文本强行点击 Dev Space 名称..."
+            )
+
+            try:
+                page.locator(f"text={DEVSPACE_NAME}").first.click(force=True)
+            except Exception:
+                pass
+
+        # 2. 等待 30 秒，确保 IDE 完整加载并彻底触发 tasks.json (folderOpen) 运行
+        log(
+            "等待 30 秒以确保 IDE 完全加载并自动运行 tasks.json..."
         )
 
         page.wait_for_timeout(
-            15000
+            30000
         )
 
         log(
@@ -829,7 +876,7 @@ def open_workspace(
         )
 
         log(
-            "Workspace 已访问。"
+            "Workspace 已成功访问，后台代理服务自启动指令已触发。"
         )
 
         return True
