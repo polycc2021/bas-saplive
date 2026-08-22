@@ -3,8 +3,8 @@ name: SAP BAS Keep Alive
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "*/60 * * * *"
+  #schedule:
+    #- cron: "*/60 * * * *"
 
 permissions:
   contents: read
