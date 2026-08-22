@@ -482,24 +482,13 @@ def get_workspace(context, jwt):
             f"Username     : {username}"
         )
 
-        # ----------------------------------------------------
-        # ID 匹配
-        # ----------------------------------------------------
-
-        if (
-            str(workspace_id)
-            == str(DEVSPACE_ID)
-        ):
+        if str(workspace_id) == str(DEVSPACE_ID):
 
             log(
                 "找到目标 Dev Space！"
             )
 
             return workspace
-
-        # ----------------------------------------------------
-        # 名称匹配
-        # ----------------------------------------------------
 
         if (
             display_name
@@ -551,7 +540,6 @@ def get_status(workspace):
 
         return status
 
-    # 如果 runtime.status 没有，再看 suspended
     config = workspace.get(
         "config",
         {}
@@ -620,12 +608,7 @@ def start_workspace(
 
     if not display_name:
 
-        # 如果 API 没有返回名称，则使用 Secret
         display_name = DEVSPACE_NAME
-
-    # ========================================================
-    # SAP 官方 API
-    # ========================================================
 
     url = (
         BAS_URL
@@ -641,22 +624,6 @@ def start_workspace(
 
     log(
         "启动 Dev Space..."
-    )
-
-    log(
-        f"Workspace ID : {workspace_id}"
-    )
-
-    log(
-        f"Username     : {username}"
-    )
-
-    log(
-        f"Display Name : {display_name}"
-    )
-
-    log(
-        f"启动 URL     : {url}"
     )
 
     payload = {
@@ -777,7 +744,7 @@ def wait_until_running(
 
 
 # ============================================================
-# 打开 Workspace（已加入自动点击空间名字触发编辑器/tasks.json）
+# 打开 Workspace 并强行呼出终端触发自启
 # ============================================================
 
 def open_workspace(
@@ -802,7 +769,6 @@ def open_workspace(
 
     try:
 
-        # 确保浏览器处于管理主页
         if "applicationstudio.cloud.sap" not in page.url:
             page.goto(
                 BAS_URL + "/index.html",
@@ -811,7 +777,6 @@ def open_workspace(
             )
             page.wait_for_timeout(5000)
 
-        # 1. 自动点击 DEVSPACE_NAME (如 yesdo) 名称进入 IDE 编辑器
         log(
             f"正在定位并点击 Dev Space '{DEVSPACE_NAME}' 名称以进入编辑器..."
         )
@@ -833,13 +798,7 @@ def open_workspace(
             return clickSpaceName(document);
         }""", DEVSPACE_NAME)
 
-        if clicked:
-
-            log(
-                f"已成功点击 '{DEVSPACE_NAME}'，正跳转至 IDE 界面..."
-            )
-
-        elif workspace_url:
+        if not clicked and workspace_url:
 
             log(
                 f"未在页面找到可点击组件，使用 API Workspace URL 跳转：{workspace_url}"
@@ -851,24 +810,39 @@ def open_workspace(
                 timeout=120000
             )
 
-        else:
-
-            log(
-                "尝试按页面文本强行点击 Dev Space 名称..."
-            )
-
-            try:
-                page.locator(f"text={DEVSPACE_NAME}").first.click(force=True)
-            except Exception:
-                pass
-
-        # 2. 等待 30 秒，确保 IDE 完整加载并彻底触发 tasks.json (folderOpen) 运行
         log(
-            "等待 30 秒以确保 IDE 完全加载并自动运行 tasks.json..."
+            "等待 15 秒让 IDE 界面与编辑器组件加载完成..."
         )
 
         page.wait_for_timeout(
-            30000
+            15000
+        )
+
+        # 核心改进：向 IDE 发送 Ctrl+` 快捷键打开终端，并直接执行 start.sh
+        log(
+            "🚀 正在发送快捷键 Ctrl+` 唤出 IDE 终端..."
+        )
+
+        page.keyboard.press("Control+Grave")
+
+        page.wait_for_timeout(
+            3000
+        )
+
+        log(
+            "🚀 正在向终端发送启动命令：bash /home/user/my-node/start.sh"
+        )
+
+        page.keyboard.type("bash /home/user/my-node/start.sh")
+
+        page.keyboard.press("Enter")
+
+        log(
+            "等待 15 秒确保节点进程启动完成..."
+        )
+
+        page.wait_for_timeout(
+            15000
         )
 
         log(
@@ -876,7 +850,7 @@ def open_workspace(
         )
 
         log(
-            "Workspace 已成功访问，后台代理服务自启动指令已触发。"
+            "Workspace 已成功访问并主动拉起节点服务！"
         )
 
         return True
@@ -939,10 +913,6 @@ def main():
 
         try:
 
-            # =================================================
-            # 1. 登录
-            # =================================================
-
             if not login(page):
 
                 log(
@@ -950,10 +920,6 @@ def main():
                 )
 
                 sys.exit(1)
-
-            # =================================================
-            # 2. JWT
-            # =================================================
 
             jwt = get_jwt(
                 context
@@ -971,10 +937,6 @@ def main():
                 "JWT 获取成功。"
             )
 
-            # =================================================
-            # 3. 查询 Workspace
-            # =================================================
-
             workspace = get_workspace(
                 context,
                 jwt
@@ -984,10 +946,6 @@ def main():
 
                 sys.exit(1)
 
-            # =================================================
-            # 4. 判断状态
-            # =================================================
-
             status = get_status(
                 workspace
             )
@@ -995,10 +953,6 @@ def main():
             log(
                 f"{DEVSPACE_NAME} 当前状态：{status}"
             )
-
-            # =================================================
-            # 5. STOPPED → 启动
-            # =================================================
 
             if status == "STOPPED":
 
@@ -1025,10 +979,6 @@ def main():
 
                     sys.exit(1)
 
-            # =================================================
-            # 6. STARTING
-            # =================================================
-
             elif status in [
                 "STARTING",
                 "CREATING"
@@ -1047,10 +997,6 @@ def main():
 
                     sys.exit(1)
 
-            # =================================================
-            # 7. RUNNING
-            # =================================================
-
             elif status in [
                 "RUNNING",
                 "STARTED"
@@ -1065,10 +1011,6 @@ def main():
                 log(
                     f"未知 Dev Space 状态：{status}"
                 )
-
-            # =================================================
-            # 8. 最终检查
-            # =================================================
 
             workspace = get_workspace(
                 context,
@@ -1098,10 +1040,6 @@ def main():
 
                 sys.exit(1)
 
-            # =================================================
-            # 9. 打开 Workspace
-            # =================================================
-
             open_workspace(
                 page,
                 workspace
@@ -1124,7 +1062,7 @@ def main():
             )
 
             log(
-                " Workspace : 已访问"
+                " Workspace : 已访问并触发节点启动"
             )
 
             log(
