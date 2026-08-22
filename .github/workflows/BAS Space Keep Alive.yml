@@ -23,13 +23,27 @@ jobs:
 
     steps:
 
+      # ============================================================
+      # Checkout
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ============================================================
+      # Setup Python
+      # ============================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+
+      # ============================================================
+      # Install dependencies
+      # ============================================================
 
       - name: Install dependencies
         run: |
@@ -37,16 +51,42 @@ jobs:
           pip install requests playwright
           playwright install --with-deps chromium
 
+
+      # ============================================================
+      # Start / Keep SAP BAS Dev Space
+      # ============================================================
+
       - name: Start / Keep SAP BAS Dev Space
         env:
+
+          # --------------------------------------------------------
+          # SAP BAS
+          # --------------------------------------------------------
+
           BAS_URL: ${{ secrets.BAS_URL }}
           BAS_USERNAME: ${{ secrets.BAS_USERNAME }}
           BAS_PASSWORD: ${{ secrets.BAS_PASSWORD }}
+
+          # --------------------------------------------------------
+          # Dev Space
+          # --------------------------------------------------------
+
           BAS_DEVSPACE: ${{ secrets.BAS_DEVSPACE }}
           BAS_DEVSPACE_ID: ${{ secrets.BAS_DEVSPACE_ID }}
 
+          # --------------------------------------------------------
+          # Cloudflare Tunnel
+          # --------------------------------------------------------
+
+          CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
+
         run: |
           python keep_alive.py
+
+
+      # ============================================================
+      # Upload screenshots / logs if failed
+      # ============================================================
 
       - name: Upload screenshots if failed
         if: failure()
@@ -59,5 +99,8 @@ jobs:
           path: |
             bas_error.png
             sap_login_failed.png
+            terminal_open_failed.png
+            terminal_failed.png
+            workspace_error.png
 
           if-no-files-found: ignore
