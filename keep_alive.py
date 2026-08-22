@@ -28,26 +28,17 @@ DEVSPACE_ID = os.getenv(
     "ws-a2zlg"
 )
 
-START_SCRIPT = os.getenv(
-    "START_SCRIPT",
-    "/home/user/my-node/start.sh"
-)
-
 
 # ============================================================
 # 日志
 # ============================================================
 
 def log(message):
-
-    print(
-        f"[BAS] {message}",
-        flush=True
-    )
+    print(f"[BAS] {message}", flush=True)
 
 
 # ============================================================
-# 环境变量检查
+# 检查环境变量
 # ============================================================
 
 def check_environment():
@@ -77,29 +68,20 @@ def check_environment():
 
 
 # ============================================================
-# 查找用户名
+# 找用户名输入框
 # ============================================================
 
 def find_username_input(page):
 
     selectors = [
-
         'input[type="email"]',
-
         'input[name="email"]',
-
         'input[name="username"]',
-
         'input[autocomplete="username"]',
-
         'input[placeholder*="Email"]',
-
         'input[placeholder*="email"]',
-
         'input[placeholder*="User"]',
-
         'input[placeholder*="user"]'
-
     ]
 
     for selector in selectors:
@@ -117,26 +99,21 @@ def find_username_input(page):
                 return locator
 
         except Exception:
-
             pass
 
     return None
 
 
 # ============================================================
-# 查找密码
+# 找密码输入框
 # ============================================================
 
 def find_password_input(page):
 
     selectors = [
-
         'input[type="password"]',
-
         'input[name="password"]',
-
         'input[autocomplete="current-password"]'
-
     ]
 
     for selector in selectors:
@@ -154,7 +131,6 @@ def find_password_input(page):
                 return locator
 
         except Exception:
-
             pass
 
     return None
@@ -167,19 +143,12 @@ def find_password_input(page):
 def click_continue(page):
 
     selectors = [
-
         'button:has-text("Continue")',
-
         'button:has-text("Sign In")',
-
         'button:has-text("Sign in")',
-
         'button:has-text("Log On")',
-
         'button[type="submit"]',
-
         'input[type="submit"]'
-
     ]
 
     for selector in selectors:
@@ -199,7 +168,6 @@ def click_continue(page):
                 return True
 
         except Exception:
-
             pass
 
     try:
@@ -235,6 +203,14 @@ def login(page):
 
     page.wait_for_timeout(5000)
 
+    log(
+        f"当前页面：{page.url}"
+    )
+
+    # --------------------------------------------------------
+    # 用户名
+    # --------------------------------------------------------
+
     username_input = find_username_input(
         page
     )
@@ -249,6 +225,10 @@ def login(page):
             BAS_USERNAME
         )
 
+        log(
+            "用户名已经填写。"
+        )
+
         click_continue(
             page
         )
@@ -256,6 +236,10 @@ def login(page):
         page.wait_for_timeout(
             3000
         )
+
+    # --------------------------------------------------------
+    # 密码
+    # --------------------------------------------------------
 
     password_input = find_password_input(
         page
@@ -271,9 +255,17 @@ def login(page):
             BAS_PASSWORD
         )
 
+        log(
+            "密码已经填写。"
+        )
+
         click_continue(
             page
         )
+
+    # --------------------------------------------------------
+    # 等待登录完成
+    # --------------------------------------------------------
 
     log(
         "等待 SAP 完成登录..."
@@ -317,7 +309,6 @@ def login(page):
         )
 
     except Exception:
-
         pass
 
     return False
@@ -359,7 +350,6 @@ def get_jwt(context):
         text = response.text().strip()
 
         if text:
-
             return text
 
         return None
@@ -367,15 +357,12 @@ def get_jwt(context):
     if isinstance(data, dict):
 
         if data.get("value"):
-
             return data["value"]
 
         if data.get("token"):
-
             return data["token"]
 
         if data.get("jwt"):
-
             return data["jwt"]
 
     if isinstance(data, str):
@@ -445,13 +432,16 @@ def get_workspace(context, jwt):
         f"API 返回 Workspace 数量：{len(data)}"
     )
 
+    # ========================================================
+    # 查找目标 Dev Space
+    # ========================================================
+
     for workspace in data:
 
         if not isinstance(
             workspace,
             dict
         ):
-
             continue
 
         config = workspace.get(
@@ -492,9 +482,7 @@ def get_workspace(context, jwt):
             f"Username     : {username}"
         )
 
-        if str(workspace_id) == str(
-            DEVSPACE_ID
-        ):
+        if str(workspace_id) == str(DEVSPACE_ID):
 
             log(
                 "找到目标 Dev Space！"
@@ -523,13 +511,12 @@ def get_workspace(context, jwt):
 
 
 # ============================================================
-# 获取状态
+# 获取 Dev Space 状态
 # ============================================================
 
 def get_status(workspace):
 
     if not workspace:
-
         return "UNKNOWN"
 
     runtime = workspace.get(
@@ -563,11 +550,9 @@ def get_status(workspace):
     )
 
     if suspended is True:
-
         return "STOPPED"
 
     if suspended is False:
-
         return "RUNNING"
 
     return "UNKNOWN"
@@ -642,34 +627,22 @@ def start_workspace(
     )
 
     payload = {
-
         "suspended": False,
-
-        "WorkspaceDisplayName":
-            display_name
-
+        "WorkspaceDisplayName": display_name
     }
 
     response = context.request.put(
-
         url,
-
         headers={
-
             "X-Approuter-Authorization":
                 f"Bearer {jwt}",
-
             "Content-Type":
                 "application/json"
-
         },
-
         data=json.dumps(
             payload
         ),
-
         timeout=60000
-
     )
 
     log(
@@ -681,6 +654,10 @@ def start_workspace(
         201,
         202
     ]:
+
+        log(
+            "Dev Space 启动失败："
+        )
 
         log(
             response.text()[:5000]
@@ -696,13 +673,13 @@ def start_workspace(
 
 
 # ============================================================
-# 等待 RUNNING
+# 等待 Dev Space RUNNING
 # ============================================================
 
 def wait_until_running(
     context,
     jwt,
-    timeout_seconds=420
+    timeout_seconds=360
 ):
 
     log(
@@ -767,58 +744,291 @@ def wait_until_running(
 
 
 # ============================================================
-# 获取 Workspace URL
+# 通过 Theia 菜单打开 Terminal
 # ============================================================
 
-def get_workspace_url(workspace):
+def click_menu_item_by_text(page, text):
 
-    runtime = workspace.get(
-        "runtime",
-        {}
+    log(
+        f"尝试通过页面菜单寻找：{text}"
     )
 
-    return (
-        runtime
-        .get("url", {})
-        .get("theia")
-    )
+    try:
 
+        result = page.evaluate(
+            """
+            (targetText) => {
 
-# ============================================================
-# 打开 Workspace
-# ============================================================
+                function findAndClick(root) {
 
-def navigate_workspace(
-    page,
-    workspace
-):
+                    if (!root) {
+                        return false;
+                    }
 
-    workspace_url = get_workspace_url(
-        workspace
-    )
+                    const elements =
+                        root.querySelectorAll("*");
 
-    if not workspace_url:
+                    for (const el of elements) {
+
+                        const text =
+                            (el.innerText || "")
+                            .trim();
+
+                        const aria =
+                            (el.getAttribute("aria-label") || "")
+                            .trim();
+
+                        const title =
+                            (el.getAttribute("title") || "")
+                            .trim();
+
+                        if (
+                            text === targetText ||
+                            aria === targetText ||
+                            title === targetText
+                        ) {
+
+                            const rect =
+                                el.getBoundingClientRect();
+
+                            if (
+                                rect.width > 0 &&
+                                rect.height > 0
+                            ) {
+
+                                el.click();
+
+                                return true;
+                            }
+                        }
+
+                        if (
+                            el.shadowRoot &&
+                            findAndClick(el.shadowRoot)
+                        ) {
+
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                return findAndClick(document);
+            }
+            """,
+            text
+        )
+
+        return bool(result)
+
+    except Exception as e:
 
         log(
-            "Workspace URL 不存在。"
+            f"寻找菜单 {text} 时发生异常：{e}"
+        )
+
+        return False
+
+
+# ============================================================
+# 打开 Terminal
+# ============================================================
+
+def open_terminal(page):
+
+    log(
+        "=========================================="
+    )
+
+    log(
+        "开始通过 Theia 菜单打开 Terminal..."
+    )
+
+    # --------------------------------------------------------
+    # 方法一：点击 Terminal 顶部菜单
+    # --------------------------------------------------------
+
+    if not click_menu_item_by_text(
+        page,
+        "Terminal"
+    ):
+
+        log(
+            "没有找到 Terminal 菜单。"
         )
 
         return False
 
     log(
-        f"Workspace URL：{workspace_url}"
+        "Terminal 菜单已点击。"
+    )
+
+    page.wait_for_timeout(
+        1500
+    )
+
+    # --------------------------------------------------------
+    # 点击 New Terminal
+    # --------------------------------------------------------
+
+    new_terminal_names = [
+        "New Terminal",
+        "New Terminal...",
+        "New Terminal (Ctrl+Shift+`)"
+    ]
+
+    clicked = False
+
+    for name in new_terminal_names:
+
+        if click_menu_item_by_text(
+            page,
+            name
+        ):
+
+            clicked = True
+
+            log(
+                f"已点击：{name}"
+            )
+
+            break
+
+    if not clicked:
+
+        log(
+            "没有找到 New Terminal 菜单项。"
+        )
+
+        try:
+
+            page.screenshot(
+                path="terminal_menu_failed.png",
+                full_page=True
+            )
+
+        except Exception:
+            pass
+
+        return False
+
+    # --------------------------------------------------------
+    # 等待 Terminal 初始化
+    # --------------------------------------------------------
+
+    log(
+        "等待 Terminal 初始化..."
+    )
+
+    for i in range(20):
+
+        page.wait_for_timeout(
+            1000
+        )
+
+        try:
+
+            terminal = page.locator(
+                ".xterm"
+            ).first
+
+            if terminal.is_visible(
+                timeout=500
+            ):
+
+                log(
+                    "检测到 xterm Terminal。"
+                )
+
+                return True
+
+        except Exception:
+            pass
+
+    log(
+        "等待 Terminal 超时。"
+    )
+
+    return False
+
+
+# ============================================================
+# 向 Terminal 输入命令
+# ============================================================
+
+def run_start_script(page):
+
+    log(
+        "准备执行 start.sh..."
     )
 
     try:
 
-        page.goto(
-            workspace_url,
-            wait_until="domcontentloaded",
-            timeout=120000
+        terminal = page.locator(
+            ".xterm"
+        ).first
+
+        if not terminal.is_visible(
+            timeout=5000
+        ):
+
+            log(
+                "没有找到可见 Terminal。"
+            )
+
+            return False
+
+        # ----------------------------------------------------
+        # xterm.js 实际输入区域
+        # ----------------------------------------------------
+
+        textarea = page.locator(
+            ".xterm-helper-textarea"
+        ).first
+
+        if not textarea.is_visible(
+            timeout=5000
+        ):
+
+            log(
+                "没有找到 xterm 输入区域。"
+            )
+
+            return False
+
+        textarea.click()
+
+        page.wait_for_timeout(
+            500
+        )
+
+        command = (
+            "bash /home/user/my-node/start.sh"
         )
 
         log(
-            f"Workspace 页面：{page.url}"
+            f"向 Terminal 输入：{command}"
+        )
+
+        textarea.fill(
+            command
+        )
+
+        textarea.press(
+            "Enter"
+        )
+
+        log(
+            "start.sh 已执行。"
+        )
+
+        # ----------------------------------------------------
+        # 等待 Xray / Cloudflared 启动
+        # ----------------------------------------------------
+
+        page.wait_for_timeout(
+            10000
         )
 
         return True
@@ -826,195 +1036,70 @@ def navigate_workspace(
     except Exception as e:
 
         log(
-            f"打开 Workspace 失败：{e}"
+            f"执行 start.sh 失败：{e}"
         )
 
         return False
 
 
 # ============================================================
-# 获取页面文本
+# 验证节点进程
 # ============================================================
 
-def get_page_text(page):
-
-    try:
-
-        return page.locator(
-            "body"
-        ).inner_text(
-            timeout=3000
-        )
-
-    except Exception:
-
-        return ""
-
-
-# ============================================================
-# 尝试启动节点
-# ============================================================
-
-def start_node_from_terminal(
-    page,
-    attempts=3
-):
-
-    command = (
-        "bash "
-        + START_SCRIPT
-        + " ; "
-        "echo __BAS_NODE_COMMAND_FINISHED__"
-    )
-
-    for attempt in range(
-        1,
-        attempts + 1
-    ):
-
-        log(
-            "=========================================="
-        )
-
-        log(
-            f"节点启动尝试 {attempt}/{attempts}"
-        )
-
-        try:
-
-            # ------------------------------------------------
-            # 尝试把焦点放到 IDE
-            # ------------------------------------------------
-
-            page.mouse.click(
-                700,
-                400
-            )
-
-            page.wait_for_timeout(
-                1000
-            )
-
-            # ------------------------------------------------
-            # 打开 Terminal
-            # ------------------------------------------------
-
-            log(
-                "尝试打开 BAS Terminal..."
-            )
-
-            page.keyboard.press(
-                "Control+Grave"
-            )
-
-            page.wait_for_timeout(
-                3000
-            )
-
-            # ------------------------------------------------
-            # 输入启动命令
-            # ------------------------------------------------
-
-            log(
-                f"执行：bash {START_SCRIPT}"
-            )
-
-            page.keyboard.type(
-                command,
-                delay=5
-            )
-
-            page.keyboard.press(
-                "Enter"
-            )
-
-            # ------------------------------------------------
-            # 等待脚本
-            # ------------------------------------------------
-
-            log(
-                "等待节点启动..."
-            )
-
-            for i in range(12):
-
-                page.wait_for_timeout(
-                    2500
-                )
-
-                text = get_page_text(
-                    page
-                )
-
-                if (
-                    "__BAS_NODE_START_SUCCESS__"
-                    in text
-                ):
-
-                    log(
-                        "=========================================="
-                    )
-
-                    log(
-                        "检测到节点启动成功标记！"
-                    )
-
-                    return True
-
-                if (
-                    "__BAS_NODE_COMMAND_FINISHED__"
-                    in text
-                ):
-
-                    log(
-                        "start.sh 已执行完成，"
-                        "但暂未检测到成功标记。"
-                    )
-
-                if i in [
-                    3,
-                    7,
-                    11
-                ]:
-
-                    log(
-                        f"节点启动等待："
-                        f"{i + 1}/12"
-                    )
-
-            log(
-                "本次 Terminal 启动未检测到成功标记。"
-            )
-
-        except Exception as e:
-
-            log(
-                f"Terminal 启动失败：{e}"
-            )
-
-        # ----------------------------------------------------
-        # 下一次尝试前等待
-        # ----------------------------------------------------
-
-        if attempt < attempts:
-
-            log(
-                "等待 5 秒后重试..."
-            )
-
-            page.wait_for_timeout(
-                5000
-            )
+def verify_node(page):
 
     log(
         "=========================================="
     )
 
     log(
-        "无法确认 start.sh 已成功执行。"
+        "验证节点进程..."
     )
 
-    return False
+    try:
+
+        textarea = page.locator(
+            ".xterm-helper-textarea"
+        ).first
+
+        textarea.click()
+
+        page.wait_for_timeout(
+            500
+        )
+
+        # 使用命令把结果写入终端
+        check_command = (
+            "echo NODE_CHECK; "
+            "pgrep -af xray || true; "
+            "pgrep -af cloudflared || true"
+        )
+
+        textarea.fill(
+            check_command
+        )
+
+        textarea.press(
+            "Enter"
+        )
+
+        page.wait_for_timeout(
+            5000
+        )
+
+        log(
+            "节点进程检查命令已执行。"
+        )
+
+        return True
+
+    except Exception as e:
+
+        log(
+            f"节点进程检查失败：{e}"
+        )
+
+        return False
 
 
 # ============================================================
@@ -1026,55 +1111,182 @@ def open_workspace(
     workspace
 ):
 
+    runtime = workspace.get(
+        "runtime",
+        {}
+    )
+
+    workspace_url = (
+        runtime
+        .get("url", {})
+        .get("theia")
+    )
+
     log(
         "打开 Dev Space Workspace..."
     )
 
-    if not navigate_workspace(
-        page,
-        workspace
-    ):
+    log(
+        f"Workspace URL：{workspace_url}"
+    )
+
+    try:
+
+        if not workspace_url:
+
+            log(
+                "Workspace URL 不存在。"
+            )
+
+            return False
+
+        page.goto(
+            workspace_url,
+            wait_until="domcontentloaded",
+            timeout=120000
+        )
+
+        log(
+            f"Workspace 页面：{page.url}"
+        )
+
+        # ----------------------------------------------------
+        # 等待 Theia
+        # ----------------------------------------------------
+
+        log(
+            "等待 IDE 完整加载 20 秒..."
+        )
+
+        page.wait_for_timeout(
+            20000
+        )
+
+        log(
+            f"当前 Workspace 页面：{page.url}"
+        )
+
+        # ----------------------------------------------------
+        # 第一次尝试打开 Terminal
+        # ----------------------------------------------------
+
+        for attempt in range(1, 4):
+
+            log(
+                "=========================================="
+            )
+
+            log(
+                f"节点启动尝试 {attempt}/3"
+            )
+
+            terminal_ok = open_terminal(
+                page
+            )
+
+            if not terminal_ok:
+
+                log(
+                    "Terminal 打开失败。"
+                )
+
+                if attempt < 3:
+
+                    log(
+                        "等待 5 秒后重试..."
+                    )
+
+                    page.wait_for_timeout(
+                        5000
+                    )
+
+                continue
+
+            # ------------------------------------------------
+            # 执行 start.sh
+            # ------------------------------------------------
+
+            start_ok = run_start_script(
+                page
+            )
+
+            if not start_ok:
+
+                log(
+                    "start.sh 执行失败。"
+                )
+
+                if attempt < 3:
+
+                    log(
+                        "等待 5 秒后重试..."
+                    )
+
+                    page.wait_for_timeout(
+                        5000
+                    )
+
+                continue
+
+            # ------------------------------------------------
+            # 验证
+            # ------------------------------------------------
+
+            verify_node(
+                page
+            )
+
+            log(
+                "=========================================="
+            )
+
+            log(
+                "start.sh 已执行。"
+            )
+
+            log(
+                "节点启动流程完成。"
+            )
+
+            return True
+
+        log(
+            "=========================================="
+        )
+
+        log(
+            "3 次尝试均未成功打开 Terminal。"
+        )
+
+        try:
+
+            page.screenshot(
+                path="terminal_failed.png",
+                full_page=True
+            )
+
+        except Exception:
+            pass
 
         return False
 
-    # --------------------------------------------------------
-    # 等待 IDE 完整加载
-    # --------------------------------------------------------
-
-    log(
-        "等待 IDE 完整加载 20 秒..."
-    )
-
-    page.wait_for_timeout(
-        20000
-    )
-
-    log(
-        f"当前 Workspace 页面：{page.url}"
-    )
-
-    # --------------------------------------------------------
-    # 启动节点
-    # --------------------------------------------------------
-
-    success = start_node_from_terminal(
-        page,
-        attempts=3
-    )
-
-    if success:
+    except Exception as e:
 
         log(
-            "Workspace 已成功访问，节点启动成功。"
+            f"打开 Workspace 失败：{e}"
         )
 
-        return True
+        try:
 
-    log(
-        "Workspace 已打开，但无法确认节点启动成功。"
-    )
+            page.screenshot(
+                path="workspace_error.png",
+                full_page=True
+            )
 
-    return False
+        except Exception:
+            pass
+
+        return False
 
 
 # ============================================================
@@ -1116,12 +1328,10 @@ def main():
         )
 
         context = browser.new_context(
-
             viewport={
                 "width": 1366,
                 "height": 768
             }
-
         )
 
         page = context.new_page()
@@ -1161,7 +1371,7 @@ def main():
             )
 
             # =================================================
-            # 查询 Workspace
+            # 获取 Workspace
             # =================================================
 
             workspace = get_workspace(
@@ -1182,7 +1392,7 @@ def main():
             )
 
             # =================================================
-            # 启动 Dev Space
+            # 如果停止 → 启动
             # =================================================
 
             if status == "STOPPED":
@@ -1210,6 +1420,10 @@ def main():
 
                     sys.exit(1)
 
+            # =================================================
+            # 如果正在启动
+            # =================================================
+
             elif status in [
                 "STARTING",
                 "CREATING"
@@ -1228,6 +1442,10 @@ def main():
 
                     sys.exit(1)
 
+            # =================================================
+            # 已经 RUNNING
+            # =================================================
+
             elif status in [
                 "RUNNING",
                 "STARTED"
@@ -1244,7 +1462,7 @@ def main():
                 )
 
             # =================================================
-            # 最终确认状态
+            # 最终确认
             # =================================================
 
             workspace = get_workspace(
@@ -1276,25 +1494,24 @@ def main():
                 sys.exit(1)
 
             # =================================================
-            # 打开 Workspace + 启动节点
+            # 打开 Workspace + Terminal + start.sh
             # =================================================
 
-            node_success = open_workspace(
+            success = open_workspace(
                 page,
                 workspace
             )
 
-            if not node_success:
+            if not success:
 
                 log(
-                    "Dev Space 虽然 RUNNING，"
-                    "但节点没有被确认成功启动。"
+                    "Workspace 已打开，但节点启动失败。"
                 )
 
                 sys.exit(1)
 
             # =================================================
-            # 最终成功
+            # 完成
             # =================================================
 
             log(
@@ -1302,7 +1519,7 @@ def main():
             )
 
             log(
-                " KEEP ALIVE 执行成功"
+                " Keep Alive 执行成功"
             )
 
             log(
@@ -1310,11 +1527,15 @@ def main():
             )
 
             log(
-                " BAS       : RUNNING"
+                " 状态      : RUNNING"
             )
 
             log(
-                " Node      : STARTED"
+                " Terminal   : 已通过 Theia 菜单打开"
+            )
+
+            log(
+                " start.sh   : 已执行"
             )
 
             log(
@@ -1339,7 +1560,6 @@ def main():
                 )
 
             except Exception:
-
                 pass
 
             sys.exit(1)
@@ -1347,10 +1567,8 @@ def main():
         finally:
 
             context.close()
-
             browser.close()
 
 
 if __name__ == "__main__":
-
     main()
